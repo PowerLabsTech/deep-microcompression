@@ -66,7 +66,7 @@ class Sequential(nn.Sequential):
             
             # Auto-name layers with type_index convention (e.g. conv2d_0)
             for layer in args:
-                if isinstance(layer, Layer) and isinstance(layer, nn.Module): 
+                if isinstance(layer, Layer) or isinstance(layer, nn.Module): 
                     idx = self.class_idx.get(layer.__class__.__name__, -1) + 1
                     self.class_idx[layer.__class__.__name__] = idx
                     layer_type = layer.__class__.__name__.lower()
@@ -163,7 +163,7 @@ class Sequential(nn.Sequential):
         criterion_fun: torch.nn.Module, 
         optimizer_fun: torch.optim.Optimizer,
         lr_scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
-        validation_dataloader: Optional[data.DataLoader] = None, 
+        validation_dataloader: Optional[Union[data.DataLoader, Tuple]] = None, 
         metrics: Dict[str, Callable[[torch.Tensor, torch.Tensor], float]] = {},
         verbose: bool = True,
         callbacks: List[Callable] = [],
@@ -190,9 +190,10 @@ class Sequential(nn.Sequential):
             class Dataset(torch.utils.data.Dataset):
 
                 def __init__(self, train_dataloader) -> None:
-                    self.X = train_dataloader[0]
-                    self.y = train_dataloader[1]
+                    self.X, self.y = train_dataloader
                     assert len(self.X) == len(self.y)
+
+                    print(self.X.shape, len(self.X), len(self.y), self.y.shape)
 
                 def __len__(self):
                     return len(self.y)
@@ -203,7 +204,8 @@ class Sequential(nn.Sequential):
             train_dataloader = torch.utils.data.DataLoader(Dataset(train_dataloader), batch_size=batch_size, shuffle=True)
 
             if validation_dataloader is not None and isinstance(validation_dataloader, tuple):
-                validation_dataloader = torch.utils.data.DataLoader(Dataset(validation_dataloader), batch_size=batch_size, shuffle=True)
+                assert len(validation_dataloader) == 2, "Contains more than 2 elements"
+                validation_dataloader = torch.utils.data.DataLoader(Dataset(validation_dataloader), batch_size=batch_size, shuffle=False)
 
         for epoch in tqdm(range(epochs)):
             # Training phase
@@ -405,36 +407,6 @@ class Sequential(nn.Sequential):
 
                 fused_model.add_module(*names_layers[i])
                 i += 1
-
-
-
-            #     if i+2 <  length and isinstance(self[names[i+1]], (BatchNorm2d)) and isinstance(self[names[i+2]], ReLU):
-            #         fused_conv2d_batchnorm2d_layer = fuse_conv2d_batchnorm2d(self[names[i]], self[names[i+1]])
-            #         fused_conv2d_batchnorm2d_relu_layer = fuse_conv2d_relu(fused_conv2d_batchnorm2d_layer, self[names[i+2]])
-            #         fused_model.add_module(names[i], fused_conv2d_batchnorm2d_relu_layer)
-            #         i += 3
-            #     elif i+1 <  length and isinstance(self[names[i+1]], (BatchNorm2d)):
-            #         fused_conv2d_batchnorm2d_layer = fuse_conv2d_batchnorm2d(self[names[i]], self[names[i+1]])
-            #         fused_model.add_module(names[i], fused_conv2d_batchnorm2d_layer)
-            #         i += 2
-            #     elif i+1 <  length and isinstance(self[names[i+1]], ReLU):
-            #         fused_conv2d_relu_layer = fuse_conv2d_relu(self[names[i]], self[names[i+1]])
-            #         fused_model.add_module(names[i], fused_conv2d_relu_layer)
-            #         i += 2
-            #     else: 
-            #         fused_model.add_module(*names_layers[i])
-            #         i += 1
-            # elif isinstance(self[names[i]], Linear):
-            #     if i+1 <  length and isinstance(self[names[i+1]], ReLU):
-            #         fused_linear_relu_layer = fuse_linear_relu(self[names[i]], self[names[i+1]])
-            #         fused_model.add_module(names[i], fused_linear_relu_layer)
-            #         i += 2                
-            #     else: 
-            #         fused_model.add_module(*names_layers[i])
-            #         i += 1
-            # else:
-            #     fused_model.add_module(*names_layers[i])
-            #     i += 1
 
         return fused_model
 
@@ -948,7 +920,7 @@ class Sequential(nn.Sequential):
 
         return prune_channel_layers_sensity
     
-
+    @torch.no_grad()
     def get_nas_prune_channel(
         self,
         input_shape, 
@@ -956,7 +928,16 @@ class Sequential(nn.Sequential):
         metric_fun, 
         device="cpu",
         num_data=100
-    ):
+    ) -> List:
+        
+        def get_all_combinations(flat_dict: dict[str, object]):
+            keys = list(flat_dict.keys())
+            values = list(flat_dict.values())
+            product = itertools.product(*values)
+
+            yield from (comb for comb in product)
+        
+
         prune_channel_hp = self.get_prune_channel_possible_hypermeters()
         param = []
 
@@ -967,7 +948,7 @@ class Sequential(nn.Sequential):
                 random_layer_prune_channel_hp = random.choice(layer_prune_channel_hp)
                 prune_param.append(random_layer_prune_channel_hp)
                 prune_param_config[layer_name] = random_layer_prune_channel_hp
-            print(prune_param_config)
+
             compression_config = {
                     "prune_channel" :{
                         "sparsity" : prune_param_config,
@@ -979,11 +960,9 @@ class Sequential(nn.Sequential):
             prune_channel_model_metric = prune_channel_model.evaluate(data_loader=data_loader, metrics={"metric": metric_fun}, device=device)
 
             param.append(prune_param + [prune_channel_model_metric["metric"]])
+            torch.cuda.empty_cache()
+        return param
 
-        estimator = Estimator(param)
-        print(estimator.fit(device=device))
-
-        return estimator
     
  
         
@@ -1285,70 +1264,3 @@ class Sequential(nn.Sequential):
         model.register_buffer("output_zero_point", input_zero_point)
 
         return model
-#
-
-
-class Estimator:
-
-    def __init__(self, data) -> None:
-        self.data = data
-
-        self.x_mu = 0
-        self.x_std = 1
-
-        self.model = None
-
-    def _normalize(self, X):
-        return (X - self.x_mu) / self.x_std
-
-    def fit(self, device):
-        
-        data = torch.Tensor(self.data)
-
-        X, Y = data[:,:-1], data[:,-1].unsqueeze(dim=1)
-        
-        self.x_mu = X.mean(dim=0)
-        x_std = X.std(dim=0)
-        self.x_std = torch.where(x_std >1e-10, x_std, torch.ones_like(x_std))
-
-        X = self._normalize(X)
-
-        N = X.size(0)
-        idx = torch.randperm(N)
-        n_val = int(N * .8)
-
-        print(N, n_val, Y.shape)
-        val_idx, train_idx = idx[:n_val], idx[n_val:]
-        print(val_idx, train_idx)
-        X_train, Y_train = X[train_idx], Y[train_idx]
-        X_val, Y_val = X[val_idx], Y[val_idx]
-        
-        self.model = Sequential(
-            Linear(X.size(1), 100),
-            ReLU(),
-            Linear(100, 100),
-            ReLU(),
-            Linear(100, 1)
-        )
-        self.model.to(device)
-
-        optimizer_fun = torch.optim.Adam(self.model.parameters(), lr=1e-3)
-        criterion_fun = nn.MSELoss()
-
-        history = self.model.fit(
-            train_dataloader=(X_train, Y_train), epochs=100, 
-            criterion_fun=criterion_fun, optimizer_fun=optimizer_fun, 
-            validation_dataloader=(X_val, Y_val),
-            metrics={"mse": nn.MSELoss()},
-            device=device, batch_size=64
-        )
-        return history
-    
-    def predict(self, X):
-        X = self._normalize(X)
-
-        return self.model(X)
-        
-
-
-
