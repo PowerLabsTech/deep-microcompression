@@ -15,11 +15,17 @@ class Estimator:
 
         layers = []
         input_features = self.data.size(1) - 1
-        for h in hidden_dim:
+
+        layers.append(Linear(input_features, hidden_dim[0]))
+        layers.append(ReLU(inplace=True))
+        layers.append(nn.Dropout(dropout))
+
+        input_features = hidden_dim[0]
+        for h in hidden_dim[1:]:
             output_features = h
             layers.append(Linear(input_features, output_features))
             layers.append(ReLU(inplace=True))
-            layers.append(nn.Dropout(dropout))
+            layers.append(nn.Dropout(dropout, inplace=True))
 
             input_features = output_features
         layers.append(Linear(input_features, 1))

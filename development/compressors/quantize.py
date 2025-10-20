@@ -98,7 +98,7 @@ class Quantize:
                 if self.rmax is None: self.rmax = x.abs().max()
                 else: self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.abs().max() 
             else:
-                if self.rmax is None: self.rmax = x.abs().view(x.size(0), -1).max(dim=1)[0]
+                if self.rmax is None: self.rmax = (x.abs().view(x.size(0), -1).max(dim=1)[0]).to(x.device)
                 else: self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.abs().view(x.size(0), -1).max(dim=1)[0]
 
             # print("the percent of x.max() is ", (x.abs() <= x.max()).sum().item()/x.numel(), self.module)

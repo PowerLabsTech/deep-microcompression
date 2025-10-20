@@ -52,11 +52,12 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
 
 
     @torch.no_grad()
-    def init_quantize(self, bitwidth, scheme, granularity):
+    def init_quantize(self, bitwidth, scheme, granularity, previous_output_quantize = None):
 
-        if scheme == QuantizationScheme.STATIC:
-            raise RuntimeError("Can not perform static quantization with BatchNorm2d, fuse the model first!")
+        # if scheme == QuantizationScheme.STATIC:
+        #     raise RuntimeError("Can not perform static quantization with BatchNorm2d, fuse the model first!")
             
+        return previous_output_quantize
 
 
     def get_size_in_bits(self):

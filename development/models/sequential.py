@@ -638,7 +638,9 @@ class Sequential(nn.Sequential):
             previous_output_quantize = layer.init_quantize(bitwidth, scheme, granularity, previous_output_quantize)
         self.train()
         if scheme == QuantizationScheme.STATIC:
+            self.to(calibration_data.device)
             self(calibration_data)
+
         return
 
     def get_size_in_bits(self):
@@ -812,45 +814,7 @@ class Sequential(nn.Sequential):
         return test_output
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    def get_layers_prune_channel_sensity_(
+    def get_layers_prune_channel_sensity(
         self, 
         input_shape, 
         data_loader, 
@@ -865,16 +829,15 @@ class Sequential(nn.Sequential):
         callbacks = [],
     ) -> Dict[str, Dict[str, List[Tuple[int, float]]]]:
 
-        prune_channel_hp = self.get_prune_channel_possible_hypermeters()
-        prune_channel_layers_sensity = dict.fromkeys(metrics.keys(), dict())
-
         if train:
             assert train_dataloader is not None
             assert epochs is not None
             assert criterion_fun is not None
             assert optimizer_fun is not None
 
-        i = 0
+        prune_channel_hp = self.get_prune_channel_possible_hypermeters()
+        prune_channel_layers_sensity = {metric_name: dict() for metric_name in metrics.keys()}
+
         for layer_name, layer_prune_channel_hp in prune_channel_hp.items():
 
             for metric_name in metrics.keys():
@@ -917,26 +880,37 @@ class Sequential(nn.Sequential):
                 else:
                     for metric_name in metrics.keys():
                         prune_channel_layers_sensity[metric_name][layer_name].append((layer_prune_channel/max_layer_prune_channel_hp, prune_channel_model_metrics[metric_name]))
-
         return prune_channel_layers_sensity
     
-    @torch.no_grad()
     def get_nas_prune_channel(
         self,
         input_shape, 
         data_loader, 
         metric_fun, 
         device="cpu",
-        num_data=100
+        num_data=100,
+        train = False,
+        train_dataloader = None,
+        epochs = None,
+        criterion_fun = None,
+        optimizer_fun = None,
+        lr_scheduler = None,
+        callbacks = [],
     ) -> List:
         
-        def get_all_combinations(flat_dict: dict[str, object]):
+        def get_all_combinations(flat_dict: dict[str, Iterable]):
             keys = list(flat_dict.keys())
             values = list(flat_dict.values())
             product = itertools.product(*values)
 
             yield from (comb for comb in product)
         
+        if train:
+            assert train_dataloader is not None
+            assert epochs is not None
+            assert criterion_fun is not None
+            assert optimizer_fun is not None
+
 
         prune_channel_hp = self.get_prune_channel_possible_hypermeters()
         param = []
@@ -949,7 +923,7 @@ class Sequential(nn.Sequential):
                 prune_param.append(random_layer_prune_channel_hp)
                 prune_param_config[layer_name] = random_layer_prune_channel_hp
 
-            compression_config = {
+                compression_config = {
                     "prune_channel" :{
                         "sparsity" : prune_param_config,
                         "metric" : "l2"
@@ -957,19 +931,31 @@ class Sequential(nn.Sequential):
                 }
             
             prune_channel_model = self.init_compress(config=compression_config, input_shape=input_shape)
-            prune_channel_model_metric = prune_channel_model.evaluate(data_loader=data_loader, metrics={"metric": metric_fun}, device=device)
+
+            if train:
+                optimizer_fun = torch.optim.SGD(prune_channel_model.parameters(), lr=1e-3, momentum=.9, weight_decay=5e-4)
+                lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_fun, mode="min", patience=1)
+
+                prune_channel_model.fit(
+                    train_dataloader=train_dataloader,
+                    epochs=epochs,
+                    criterion_fun=criterion_fun,
+                    optimizer_fun=optimizer_fun,
+                    lr_scheduler=lr_scheduler,
+                    validation_dataloader=data_loader,
+                    metrics={"metric": metric_fun},
+                    verbose=False,
+                    callbacks=callbacks,
+                    device=device
+                )
+
+                prune_channel_model_metric = prune_channel_model.evaluate(data_loader=data_loader, metrics={"metric": metric_fun}, device=device)
+            else:
+                prune_channel_model_metric = prune_channel_model.evaluate(data_loader=data_loader, metrics={"metric": metric_fun}, device=device)
+
 
             param.append(prune_param + [prune_channel_model_metric["metric"]])
-            torch.cuda.empty_cache()
         return param
-
-    
- 
-        
-
-
-        
-    
 
     def get_weight_distributions(self, bins=256) -> Dict[str, Optional[torch.Tensor]]:
         """Get weight histograms for all layers
@@ -988,279 +974,3 @@ class Sequential(nn.Sequential):
                 weight_dist[name] = None
         return weight_dist
     
-
-
-    @torch.no_grad()
-    def get_layers_prune_channel_sensity(self, data_loader: data.DataLoader, 
-                                       sparsities: Dict[str, List], 
-                                       metric: str = "l2", 
-                                       device="cpu") -> Dict[str, List[float]]:
-        """Analyze pruning sensitivity for each layer
-        
-        Args:
-            data_loader: Data for evaluation
-            sparsities: Dictionary of sparsity values to test per layer
-            metric: Pruning metric ('l1', 'l2', etc.)
-            device: Device to run on
-            
-        Returns:
-            Dictionary of accuracy results for each sparsity level
-        """
-        history = dict()
-        default_config = dict()
-        for name in self.names():
-            default_config[name] = 0.2
-
-        # Test each layer's sensitivity to pruning
-        for name in self.names():
-            history[name] = []
-            for sparsity in tqdm(sparsities[name], desc=f"Pruning {name}"):
-                config = default_config.copy()
-                config[name] = sparsity
-                model = self.prune_channel(config, metric=metric)
-                history[name] += [{sparsity : model.evaluate(data_loader, device=device)}]
-
-        # Plot results
-        for layer, records in history.items():
-            sparsities = []
-            scores = []
-            for record in records:
-                for s, score in record.items():
-                    sparsities.append(s)
-                    scores.append(score)
-            plt.plot(sparsities, scores, label=layer, marker='o')
-
-        plt.xlabel("Sparsity")
-        plt.ylabel("Evaluation Score")
-        plt.title("Layer-wise Pruning Sensitivity")
-        plt.grid(True)
-        plt.legend()
-        plt.show()
-
-        return history
-    
-        
-
-    @torch.no_grad()
-    def get_dynamic_quantize_per_tensor_sensity(self, data_loader: data.DataLoader, 
-                                              bitwidths: Iterable[int], 
-                                              device: str = "cpu") -> Dict[float, List[float]]:
-        """Analyze sensitivity to different quantization bitwidths (per-tensor)
-        
-        Args:
-            data_loader: Data for evaluation
-            bitwidths: List of bitwidths to test
-            device: Device to run on
-            
-        Returns:
-            Dictionary of accuracy results for each bitwidth
-        """
-        history = dict()
-
-        for bitwidth in bitwidths:
-            model = self.dynamic_quantize_per_tensor(bitwidth)
-            history[bitwidth] = model.evaluate(data_loader, device=device)
-            print(history)
-
-
-        return history
-
-    @torch.no_grad()
-    def dynamic_quantize_per_tensor(self, bitwidth: int = 8):
-        """Apply dynamic per-tensor quantization to model
-        
-        Args:
-            bitwidth: Number of bits to use for quantization (max 8)
-            
-        Returns:
-            New quantized model instance
-        """
-        assert bitwidth <= 8
-
-        # model = copy.deepcopy(self)
-        setattr(self, "quantize_bitwidth", bitwidth)
-        setattr(self, "quantize_type", DYNAMIC_QUANTIZATION_PER_TENSOR)
-
-        for layer in self.layers():
-            # if hasattr(layer, "dynamic_quantize_per_tensor"):
-                layer.dynamic_quantize_per_tensor(bitwidth)
-
-        return 
-
-    @torch.no_grad()
-    def get_dynamic_quantize_per_channel_sensity(self, data_loader: data.DataLoader, 
-                                               bitwidths: Iterable[float], 
-                                               device: str = "cpu") -> Dict[float, List[float]]:
-        """Analyze sensitivity to different quantization bitwidths (per-channel)
-        
-        Args:
-            data_loader: Data for evaluation
-            bitwidths: List of bitwidths to test
-            device: Device to run on
-            
-        Returns:
-            Dictionary of accuracy results for each bitwidth
-        """
-        history = dict()
-
-        for bitwidth in bitwidths:
-            model = self.dynamic_quantize_per_channel(bitwidth)
-            history[bitwidth] = model.evaluate(data_loader, device=device)
-            print(history)
-
-        return history
-
-    @torch.no_grad()
-    def dynamic_quantize_per_channel(self, bitwidth: int = 8):
-        """Apply dynamic per-channel quantization to model
-        
-        Args:
-            bitwidth: Number of bits to use for quantization (max 8)
-            
-        Returns:
-            New quantized model instance
-        """
-        assert bitwidth <= 8
-
-        model = copy.deepcopy(self)
-        setattr(model, "quantize_type", DYNAMIC_QUANTIZATION_PER_CHANNEL)
-        setattr(model, "quantize_bitwidth", bitwidth)
-
-        for layer in model.layers.values():
-            if hasattr(layer, "dynamic_quantize_per_channel"):
-                layer.dynamic_quantize_per_channel(bitwidth)
-
-        return model
-
-    @torch.no_grad()
-    def get_static_quantize_per_tensor_sensity(self, input_batch_real: torch.Tensor, 
-                                             data_loader: data.DataLoader, 
-                                             bitwidths: Iterable[float], 
-                                             device: str = "cpu") -> Dict[float, List[float]]:
-        """Analyze sensitivity to different static quantization bitwidths (per-tensor)
-        
-        Args:
-            input_batch_real: Example input data for calibration
-            data_loader: Data for evaluation
-            bitwidths: List of bitwidths to test
-            device: Device to run on
-            
-        Returns:
-            Dictionary of accuracy results for each bitwidth
-        """
-        history = dict()
-
-        for bitwidth in bitwidths:
-            model = self.static_quantize_per_tensor(input_batch_real, bitwidth)
-            history[bitwidth] = model.evaluate(data_loader, device=device)
-            print(history)
-
-        return history
-
-    @torch.no_grad()
-    def static_quantize_per_tensor(self, input_batch_real: torch.Tensor, bitwidth: int = 8):
-        """Apply static per-tensor quantization to model
-        
-        Args:
-            input_batch_real: Example input data for calibration
-            bitwidth: Number of bits to use for quantization (max 8)
-            
-        Returns:
-            New quantized model instance
-        """
-        assert bitwidth <= 8
-
-        model = copy.deepcopy(self)
-        setattr(model, "quantize_type", STATIC_QUANTIZATION_PER_TENSOR)
-        setattr(model, "quantize_bitwidth", bitwidth)
-
-        # Calculate quantization parameters
-        input_scale, input_zero_point = get_quantize_scale_zero_point_per_tensor_assy(input_batch_real, bitwidth)
-        input_batch_quant = quantize_per_tensor_assy(input_batch_real, input_scale, input_zero_point, bitwidth)
-
-        model.register_buffer("input_scale", input_scale)
-        model.register_buffer("input_zero_point", input_zero_point)
-
-        # Quantize each layer
-        for layer in model.layers.values():
-            if hasattr(layer, "static_quantize_per_tensor"):
-                input_batch_real, input_batch_quant, \
-                input_scale, input_zero_point = layer.static_quantize_per_tensor(
-                    input_batch_real, input_batch_quant,
-                    input_scale, input_zero_point,
-                    bitwidth,
-                )
-            else:
-                raise AttributeError(f"Static Quantization Per Tensor not implemented for {layer.__class__.__name__}!!!")
-
-        model.register_buffer("output_scale", input_scale)
-        model.register_buffer("output_zero_point", input_zero_point)
-
-        return model
-
-
-    @torch.no_grad()
-    def get_static_quantize_per_channel_sensity(self, input_batch_real: torch.Tensor, 
-                                              data_loader: data.DataLoader, 
-                                              bitwidths: Iterable[float], 
-                                              device: str = "cpu") -> Dict[float, List[float]]:
-        """Analyze sensitivity to different static quantization bitwidths (per-channel)
-        
-        Args:
-            input_batch_real: Example input data for calibration
-            data_loader: Data for evaluation
-            bitwidths: List of bitwidths to test
-            device: Device to run on
-            
-        Returns:
-            Dictionary of accuracy results for each bitwidth
-        """
-        history = dict()
-
-        for bitwidth in bitwidths:
-            model = self.static_quantize_per_channel(input_batch_real, bitwidth)
-            history[bitwidth] = model.evaluate(data_loader, device=device)
-            print(history)
-
-        return history
-
-    @torch.no_grad()
-    def static_quantize_per_channel(self, input_batch_real: torch.Tensor, bitwidth: int = 8):
-        """Apply static per-channel quantization to model
-        
-        Args:
-            input_batch_real: Example input data for calibration
-            bitwidth: Number of bits to use for quantization (max 8)
-            
-        Returns:
-            New quantized model instance
-        """
-        assert bitwidth <= 8
-
-        model = copy.deepcopy(self)
-        setattr(model, "quantize_type", STATIC_QUANTIZATION_PER_CHANNEL)
-        setattr(model, "quantize_bitwidth", bitwidth)
-
-        # Calculate quantization parameters
-        input_scale, input_zero_point = get_quantize_scale_zero_point_per_tensor_assy(input_batch_real, bitwidth)
-        input_batch_quant = quantize_per_tensor_assy(input_batch_real, input_scale, input_zero_point, bitwidth)
-
-        model.register_buffer("input_scale", input_scale)
-        model.register_buffer("input_zero_point", input_zero_point)
-
-        # Quantize each layer
-        for layer in model.layers.values():
-            if hasattr(layer, "static_quantize_per_channel"):
-                input_batch_real, input_batch_quant, \
-                input_scale, input_zero_point = layer.static_quantize_per_channel(
-                    input_batch_real, input_batch_quant,
-                    input_scale, input_zero_point,
-                    bitwidth,
-                )
-            else:
-                raise AttributeError(f"Static Quantization Per Channel not implemented for {layer.__class__.__name__}!!!")
-
-        model.register_buffer("output_scale", input_scale)
-        model.register_buffer("output_zero_point", input_zero_point)
-
-        return model
