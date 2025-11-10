@@ -3,7 +3,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Force TensorFlow to CPU
 
 import sys
 import os
@@ -23,7 +23,7 @@ sys.path.append("../../../")
 
 try:
     from development import (
-        Sequential, Conv2d, Linear, ReLU, 
+        Sequential, Conv2d, Linear, ReLU, BatchNorm2d,
         MaxPool2d, Flatten, QuantizationScheme, QuantizationGranularity
     )
 except ImportError:
@@ -85,10 +85,13 @@ def get_tf_model(train_data, test_data):
     print("No TF model found. Training from scratch (up to 25 epochs)...")
     model = tf.keras.Sequential([
         tf.keras.layers.Input(shape=INPUT_SHAPE_TF),
-        tf.keras.layers.Conv2D(filters=6, kernel_size=3, padding="valid"),
+        tf.keras.layers.ZeroPadding2D(padding=2),
+        tf.keras.layers.Conv2D(filters=6, kernel_size=5, padding="valid"),
+        tf.keras.layers.BatchNormalization(),
         tf.keras.layers.ReLU(),
         tf.keras.layers.MaxPool2D(pool_size=2, strides=2),
-        tf.keras.layers.Conv2D(filters=16, kernel_size=3, padding="valid"),
+        tf.keras.layers.Conv2D(filters=16, kernel_size=5, padding="valid"),
+        tf.keras.layers.BatchNormalization(),
         tf.keras.layers.ReLU(),
         tf.keras.layers.MaxPool2D(pool_size=2, strides=2),
         tf.keras.layers.Flatten(),
@@ -108,7 +111,7 @@ def get_tf_model(train_data, test_data):
         epochs=25,
         batch_size=32, 
         validation_data=(test_img, test_lbl),
-        callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=4, restore_best_weights=True)],
+        callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)],
         verbose=2
     )
     
@@ -128,10 +131,14 @@ def convert_tf_to_dmc(tf_model):
     prev_layer_is_flatten = False
     last_conv_channel = None
     dmc_layers = []
+    pad_next_conv = None
 
     for layer in tf_model.layers:
         if isinstance(layer, tf.keras.layers.InputLayer):
             pass
+        elif isinstance(layer, tf.keras.layers.ZeroPadding2D):
+            pad_next_conv = layer.padding
+
         elif isinstance(layer, tf.keras.layers.Conv2D):
             last_conv_channel = layer.weights[0].shape[-1]
             weight_np = np.transpose(layer.weights[0].numpy(), (3, 2, 0, 1)) # TF(kH,kW,in,out) -> Torch(out,in,kH,kW)
@@ -139,7 +146,11 @@ def convert_tf_to_dmc(tf_model):
             stride = layer.strides[0]
             padding_str = layer.padding
             pad = [0]*4 if padding_str == "valid" else [(kernel_size - 1)//2]*4
-
+            if pad_next_conv is not None:
+                for i, padding in enumerate(pad_next_conv):
+                    pad[i*2] = padding[0]
+                    pad[i*2 + 1] = padding[1]
+                pad_next_conv = None
             has_bias = len(layer.weights) > 1
             conv_layer = Conv2d(in_channels, out_channels, kernel_size, stride, pad=pad, bias=has_bias)
             if has_bias:
@@ -164,6 +175,14 @@ def convert_tf_to_dmc(tf_model):
             copy_tensor(torch.from_numpy(layer.weights[1].numpy()), linear_layer.bias)
             copy_tensor(torch.from_numpy(weight_np), linear_layer.weight)
             dmc_layers.append(linear_layer)         
+
+        elif isinstance(layer, tf.keras.layers.BatchNormalization):
+            bn_layer = BatchNorm2d(num_features=layer.gamma.shape[0], affine=layer.scale or layer.center, eps=layer.epsilon, momentum=(1 - layer.momentum))
+            copy_tensor(torch.from_numpy(layer.gamma.numpy()), bn_layer.weight)
+            copy_tensor(torch.from_numpy(layer.beta.numpy()), bn_layer.bias)
+            copy_tensor(torch.from_numpy(layer.moving_mean.numpy()), bn_layer.running_mean)
+            copy_tensor(torch.from_numpy(layer.moving_variance.numpy()), bn_layer.running_var)
+            dmc_layers.append(bn_layer)
 
         elif isinstance(layer, tf.keras.layers.ReLU):
             dmc_layers.append(ReLU())
