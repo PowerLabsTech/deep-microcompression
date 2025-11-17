@@ -8,8 +8,8 @@ source venv/bin/activate
 echo "\n--- Installing dependencies (torch, torchvision, tqdm, matplotlib) ---"
 pip install torch torchvision tqdm matplotlib
 
-echo "\n--- Starting experiment reproduction (reproduce_lenet5.py) ---"
-python reproduce_lenet5.py
+echo "\n--- Starting experiment reproduction (reproduce_table3.py) ---"
+python reproduce_table3.py
 
 echo "\n--- Cleaning up ---"
 deactivate

@@ -33,7 +33,7 @@ Run the script. It will create a local Python virtual environment (venv/), insta
 
 The script will run the full experiment, which involves three stages:
 
-1. Baseline Model: Trains the original LeNet-5 model (25 epochs with early stopping) and saves it as lenet5_state_dict.pth.
+1. Baseline Model: Trains the original LeNet-5 model (20 epochs with early stopping) and saves it as lenet5_state_dict.pth.
 
 1. Pruned Model: Loads the baseline weights, applies the optimal structured pruning (conv2d_1: 9, linear_0: 50), and retrains the model (20 epochs).
 

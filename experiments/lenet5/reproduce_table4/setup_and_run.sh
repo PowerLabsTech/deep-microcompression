@@ -11,9 +11,9 @@ source venv/bin/activate
 echo "\n--- Installing dependencies (torch, torchvision, tqdm, tensorflow, numpy, matplotlib) ---"
 pip install torch torchvision tqdm tensorflow numpy matplotlib
 
-echo "\n--- Starting TFLite comparison (reproduce_tflite_comparison.py) ---"
+echo "\n--- Starting TFLite comparison (reproduce_table4.py) ---"
 # Set a lucky number for reproducibility
-python reproduce_tflite_comparison.py
+python reproduce_table4.py
 
 echo "\n--- Cleaning up ---"
 deactivate

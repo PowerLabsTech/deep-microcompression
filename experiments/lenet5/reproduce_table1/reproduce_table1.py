@@ -143,7 +143,6 @@ def train_pruned(baseline_model, train_loader, test_loader):
     pruned_model = copy.deepcopy(baseline_model)
     pruned_model = pruned_model.init_compress(pruning_config, INPUT_SHAPE).to(DEVICE)
     
-    
     # Retrain (fine-tune) the pruned model
     print("Retraining pruned model (20 epochs)...")
     criterion_fun = nn.CrossEntropyLoss()
@@ -205,7 +204,7 @@ def train_quantized_pruned(pruned_model, train_loader, test_loader):
     lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer_fun, mode="min", patience=1)
 
     quantized_model.fit(
-        train_loader, 15, 
+        train_loader, 20, 
         criterion_fun, optimizer_fun, lr_scheduler,
         validation_dataloader=test_loader, 
         metrics={"acc": accuracy_fun},
@@ -244,7 +243,7 @@ if __name__ == "__main__":
     print(f"\n===> Layerwise Prunning Results:")
     for i, (name, module) in enumerate(pruned_model.names_layers()):
         if ("conv2d" in name) or ("linear" in name):
-            print(f"    Layer name : {name},  Size Ratio: {(1 - module.get_size_in_bits()/baseline_model[i].get_size_in_bits())*100:.2f}%") # type: ignore
+            print(f"    Layer name : {name}, Original size {baseline_model[i].get_size_in_bits()/8*1024} Reduced size {module.get_size_in_bits()/8*1024}:  Size Ratio: {(1 - module.get_size_in_bits()/baseline_model[i].get_size_in_bits())*100:.2f}%") # type: ignore
 
 
     # --- STAGE 3: QUANTIZED-PRUNED ---
@@ -260,5 +259,5 @@ if __name__ == "__main__":
     print("\n--- REPRODUCTION FINISHED ---")
     print("\nFinal Results Summary:")
     print(f"Baseline:   {baseline_eval['acc']:.2f}% Acc, {original_size} bytes")
-    print(f"Pruned:     {pruned_eval['acc']:.2f}% Acc, {pruned_size} bytes")
-    print(f"Quantized:  {quantized_eval['acc']:.2f}% Acc, {quantized_size} bytes")
+    print(f"Pruned:     {pruned_eval['acc']:.2f}% Acc, {pruned_size} bytes, {pruned_size/original_size*100:.2f}% of original")
+    print(f"Quantized:  {quantized_eval['acc']:.2f}% Acc, {quantized_size} bytes, {quantized_size/original_size*100:.2f}% of original")
