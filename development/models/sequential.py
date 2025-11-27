@@ -1,16 +1,27 @@
 """
 @file sequential.py
-@brief Extended nn.Sequential container with quantization, pruning and deployment capabilities
+@brief DMC Pipeline Container: Orchestrates Pruning, Quantization, and Code Gen.
+
+This module implements the core container for the Deep Microcompression (DMC) 
+framework. It aligns with the "Model Development" phase described in Section III 
+and Figure 1 of the paper[cite: 88].
+
+Pipeline Stages Managed by this Container:
+1.  **Structured Pruning:** Storage of channel masks and management of dense 
+    output generation[cite: 93].
+2.  **Quantization:** Handling of Static Quantization parameters (scale/zero-point) 
+    to enable integer-only arithmetic[cite: 103].
+3.  **Deployment:** Acts as the source of truth for generating the dependency-free 
+    C library[cite: 13].
 """
 
 __all__ = [
     "Sequential"
 ]
-
 import copy, math, random, itertools
 from os import path
 from typing import (
-    List, Tuple, Dict, OrderedDict, Iterable, Callable, Optional, Union
+    List, Tuple, Dict, OrderedDict, Iterable, Callable, Optional, Union, Any
 )
 from tqdm.auto import tqdm
 
@@ -19,7 +30,7 @@ from torch import nn
 from torch._jit_internal import _copy_to_script_wrapper
 from torch.utils import data
 
-# from .callback import EarlyStopper
+# DMC Framework Imports
 from ..layers.layer import Layer
 from ..layers.conv import Conv2d
 from ..layers.linear import Linear
@@ -28,8 +39,6 @@ from ..layers.activation import ReLU, ReLU6
 
 from ..compressors import Quantize
 from ..utils import (
-    get_quantize_scale_zero_point_per_tensor_assy,
-    quantize_per_tensor_assy,
     convert_tensor_to_bytes_var,
     QuantizationScheme,
     QuantizationScaleType,
@@ -53,8 +62,6 @@ class Sequential(nn.Sequential):
                 - An OrderedDict of layers
                 - Individual layer instances
         """
-
-
         super(Sequential, self).__init__()
         setattr(self, "_dmc", dict())
 
@@ -63,7 +70,6 @@ class Sequential(nn.Sequential):
             for key, module in args[0].items():
                 self.add_module(key, module)
         else:
-            
             # Auto-name layers with type_index convention (e.g. conv2d_0)
             for layer in args:
                 if isinstance(layer, Layer) or isinstance(layer, nn.Module): 
@@ -79,20 +85,26 @@ class Sequential(nn.Sequential):
         self.is_pruned_channel = False
         self.is_quantized = False
 
-    def names_layers(self):
+    def names_layers(self)-> Iterable[Tuple[str, Layer]]:
+        """
+        Yields (name, layer) pairs.
+        """
         for name, layer in self._modules.items():
             yield name, layer
 
-    def names(self):
+    def names(self) -> Iterable[str]:
         for name in self._modules.keys():
             yield name
 
-    def layers(self):
+    def layers(self) -> Iterable[Layer]:
         for layer in self._modules.values():
             yield layer
     
     @_copy_to_script_wrapper
     def __getitem__(self, idx: Union[slice, str, int]) -> Union["Sequential", Layer]:
+        """
+        Access layers by index, name, or slice.
+        """
         if isinstance(idx, slice):
             return self.__class__(OrderedDict(list(self._modules.items())[idx]))
         elif isinstance(idx, str):
@@ -106,53 +118,89 @@ class Sequential(nn.Sequential):
         else:
             raise IndexError(f"Unknown index {idx}")
         
-    def __add__(self, other) -> "Sequential":
-        if isinstance(other, Sequential):
-            for layer in other:
-                self += layer
-            return self
-        elif isinstance(other, Layer):
-            idx = self.class_idx.get(other.__class__.__name__, -1) + 1
-            self.class_idx[other.__class__.__name__] = idx
-            layer_type = other.__class__.__name__.lower()
-            self.add_module(f"{layer_type}_{idx}", other)
-            return self
-        raise RuntimeError(f"cannot add type{other} to Sequential")
+    # def __add__(self, other) -> "Sequential":
 
-    
+    #     result = Sequential()
+    #     print(other)
+    #     for layer in self:
+    #         result = result + layer
+        
+    #     if isinstance(other, Sequential):
+    #         for layer in other:
+    #             result = result + layer
+    #         return result
+    #     elif isinstance(other, Layer):
+    #         idx = result.class_idx.get(other.__class__.__name__, -1) + 1
+    #         result.class_idx[other.__class__.__name__] = idx
+    #         layer_type = other.__class__.__name__.lower()
+    #         result.add_module(f"{layer_type}_{idx}", other)
+    #         return result
+    #     raise RuntimeError(f"cannot add type{other} to Sequential")
+
 
     @property
-    def is_compressed(self):
+    def is_compressed(self) -> bool:
+        """
+        Indicates if the model has entered the optimization pipeline.
+        
+        Returns True if:
+        - Stage 1: Structured Pruning is active (`is_pruned_channel`)
+        - Stage 2: Quantization is active (`is_quantized`)
+        """
         return self.is_pruned_channel or self.is_quantized
 
-    # @property
-    # def input_quantize(self):
-    #     if self.is_quantized and self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"] == QuantizationScheme.STATIC:
-    #         return self[0].input_quantize
-    #     return None
-
-
     @property
-    def output_quantize(self):
+    def output_quantize(self) -> Optional[Quantize]:
+        """
+        Retrieves the Quantization Parameters (Scale, Zero-Point) for the 
+        final output tensor.
+        
+        Mapping to Paper Section III-B (Quantization):
+        In 'Static Quantization', the final integer output of the network must 
+        be de-quantized or interpreted by the application. This property exposes 
+        the necessary parameters to the C-generation engine so the microcontroller 
+        knows how to interpret the final inference result.
+        
+        Returns:
+            Quantization parameters if scheme is STATIC, else None.
+        """
         if self.is_quantized and self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"] == QuantizationScheme.STATIC:
             return self[-1].output_quantize
         return None
+    
+    @output_quantize.setter
+    def output_quantize(self, _: Any):
+    # Read-only property derived from the final layer's state
+        pass
 
 
     def forward(self, input):
-        """Forward pass with quantization support
+        """
+        Forward pass executing the DMC inference pipeline.
         
+        This method adapts its behavior based on the pipeline stage:
+        1.  Full Precision: Standard floating-point inference.
+        2.  Quantization-Aware (Stage 2): Simulates integer arithmetic constraints
+            (Figure 2) by applying fake-quantization to inputs and activations.
+                
         Args:
-            input: Input tensor
+            input: Input tensor (Float32).
             
         Returns:
-            Output tensor after passing through all layers
+            Output tensor (simulating integer output if quantized).
         """
+        # DMC Stage 2: Quantization-Aware Inference Simulation
+        # If in quantized mode, explicitly quantize the input data first.
+        # This simulates the "Input Data -> Quantize" step implicit in integer-only hardware
+        # where sensors/inputs must be converted to int8 before processing.
         if self.is_quantized:
             if hasattr(self, "input_quantize"):
                 input = self.input_quantize(input)
+
         for i, layer in enumerate(self):
-            # print(f"Layer {i} ({layer.__class__.__name__}): input shape = {input.shape} kernel_size {getattr(layer, "kernel_size", "nan")} stride {getattr(layer, "stride", "nan")} padding {getattr(layer, "padding", "nan")}")
+            # Execute layers sequentially.
+            # If is_quantized=True, individual layers (Conv2d, Linear) execute 
+            # their own fake-quantization logic (Weight/Activation quantization)
             input = layer(input)
                 
         return input
@@ -170,44 +218,35 @@ class Sequential(nn.Sequential):
         batch_size = 32,
         device: str = "cpu"
     ) -> Dict[str, List[float]]:
-        """Training loop with optional validation and metrics tracking
+        """
+        Universal Training Loop for DMC Optimization Stages.
+        
+        This method implements the retraining logic required for two critical 
+        steps in the DMC Development Pipeline (Figure 1):
+        
+        1.  "Fine-tune Parameters" (Post-Pruning): After Structured Channel Pruning (Section III-A), the model is retrained 
+            to recover accuracy lost due to removing filters.
+            
+        2.  "Retrain Model Parameters" (QAT): During Quantization (Section III-B), this loop performs Quantization-Aware 
+            Training (QAT) to simulate quantization noise and adapt weights for 
+            low-bitwidth (e.g., 2-bit/4-bit) representation.
         
         Args:
-            train_dataloader: Training data loader
-            epochs: Number of training epochs
-            validation_dataloader: Optional validation data loader
-            metrics: Dictionary of metric functions {name: function}
-            device: Device to run on ('cpu' or 'cuda')
+            train_dataloader: Source of training data.
+            epochs: Duration of retraining/fine-tuning.
+            criterion_fun: Loss function (e.g., CrossEntropy).
+            optimizer_fun: Optimizer (e.g., SGD/Adam).
+            validation_dataloader: Validation set for monitoring accuracy recovery.
+            metrics: Dict of metric functions (e.g., {'acc': accuracy_fn}).
+            device: Execution target ('cpu' or 'cuda').
             
         Returns:
-            Dictionary of training/validation metrics over time
+            Dictionary containing loss and metric history for analysis.
         """
         history = dict()
         metrics_values = dict()
 
-        if isinstance(train_dataloader, tuple):
-            assert len(train_dataloader) == 2, "Contains more than 2 elements"
-            class Dataset(torch.utils.data.Dataset):
-
-                def __init__(self, train_dataloader) -> None:
-                    self.X, self.y = train_dataloader
-                    assert len(self.X) == len(self.y)
-
-                    print(self.X.shape, len(self.X), len(self.y), self.y.shape)
-
-                def __len__(self):
-                    return len(self.y)
-                
-                def __getitem__(self, index):
-                    return self.X[index], self.y[index]
-                
-            train_dataloader = torch.utils.data.DataLoader(Dataset(train_dataloader), batch_size=batch_size, shuffle=True)
-
-            if validation_dataloader is not None and isinstance(validation_dataloader, tuple):
-                assert len(validation_dataloader) == 2, "Contains more than 2 elements"
-                validation_dataloader = torch.utils.data.DataLoader(Dataset(validation_dataloader), batch_size=batch_size, shuffle=False)
-
-        for epoch in tqdm(range(epochs)):
+        for epoch in tqdm(range(epochs), desc=f"DMC Training (Epochs 1-{epochs})"):
             # Training phase
             train_loss = 0
             train_data_len = 0
@@ -224,7 +263,7 @@ class Sequential(nn.Sequential):
                 loss.backward()
                 optimizer_fun.step()
 
-                train_loss += loss.item()
+                train_loss += loss.item()*X.size(0)
                 train_data_len += X.size(0)
 
                 with torch.inference_mode():
@@ -235,9 +274,6 @@ class Sequential(nn.Sequential):
             for name in metrics.keys():
                 metrics_values[f"train_{name}"] = metrics_result[name] / train_data_len
 
-# #################################################
-#                 break
-# #################################################
 
             # Validation phase
             if validation_dataloader is not None:
@@ -247,13 +283,10 @@ class Sequential(nn.Sequential):
                 for name in metrics.keys():
                     metrics_values[f"validation_{name}"] = metrics_result[name]
 
-#################################################
-                        # break
-#################################################
 
                 # Learning rate scheduling
                 if lr_scheduler is not None: 
-                    lr_scheduler.step(validation_loss)
+                    lr_scheduler.step(epoch)
 
             # Logging
                 if verbose:
@@ -287,9 +320,9 @@ class Sequential(nn.Sequential):
                 for name in metrics:
                     self.fit_history[f"train_{name}"] = self.fit_history.get(f"train_{name}", []) + [metrics_values[f"train_{name}"]]
                     history[f"train_{name}"] = history.get(f"train_{name}", []) + [metrics_values[f"train_{name}"]]
-
+            
+            # Callbacks (e.g., EarlyStopping, ModelCheckpoint)
             for callback in callbacks:
-                # if isinstance(callback, EarlyStopper):
                 if callback(self, history, epoch):
                     return history
 
@@ -303,122 +336,68 @@ class Sequential(nn.Sequential):
         metrics: Dict[str, Callable[[torch.Tensor, torch.Tensor], float]], 
         device: str = "cpu"
     ) -> Dict[str, float]:
-        """Evaluate model accuracy on given dataset
-        
+        """
+        Evaluate model performance on a dataset.
+ 
         Args:
-            data_loader: Data loader for evaluation
-            device: Device to run on
+            data_loader: Validation/Test dataset loader.
+            metrics: Dictionary of metric functions (e.g. Top-1 Accuracy).
+            device: Execution target.
             
         Returns:
-            Accuracy percentageupdate_dynamic_quantize_per_tensor_parameters
+            Dictionary of calculated metrics.
         """
-###############################################################################################
-        # Saving the a test input data
-        if not hasattr(self, "test_input"):
-            setattr(self, "test_input", next(iter(data_loader))[0])
-###############################################################################################
         metric_results = dict()
         data_len = 0
         for metric_name in metrics.keys():
             metric_results[metric_name] = 0
             
         self.eval()
-        for X, y_true in tqdm(data_loader):
-            data_len += X.size(0)
+        for X, y_true in tqdm(data_loader, desc="Evaluating", leave=False):
             X = X.to(device)
             y_true = y_true.to(device)
             y_pred = self(X)
             for metric_name, metric_func in metrics.items():
-                metric_results[metric_name] += metric_func(y_pred, y_true)
-    ###############################################
-            # break
-    ###############################################
+                metric_results[metric_name] += metric_func(y_pred, y_true) * X.size(0)
+            data_len += X.size(0)
+
         for metric_name in metrics.keys():
             metric_results[metric_name] /= data_len
         return metric_results
     
 
-    def fuse(self):
-        # names = list(self.names())
-        names_layers = list(self.names_layers())
-        length = len(self)
-
-        fused_model = Sequential()
-        i = 0
-        while i < length:
-            name, layer = names_layers[i]
-
-            if isinstance(layer, Conv2d):
-                next_layers = names_layers[i+1 : i+3]
-
-                if len(next_layers) >= 2:
-                    _, batchnorm2d = next_layers[0]
-                    _, activation = next_layers[1]
-
-                    if isinstance(batchnorm2d, BatchNorm2d) and isinstance(activation, ReLU):
-                        fused_conv2d_batchnorm2d_layer = fuse_conv2d_batchnorm2d(layer, batchnorm2d)
-                        fused_conv2d_batchnorm2d_relu_layer = fuse_conv2d_relu(fused_conv2d_batchnorm2d_layer, activation)
-                        fused_model.add_module(name, fused_conv2d_batchnorm2d_relu_layer) 
-                        i += 3
-                        continue
-                    elif isinstance(batchnorm2d, BatchNorm2d) and isinstance(activation, ReLU6):
-                        fused_conv2d_batchnorm2d_layer = fuse_conv2d_batchnorm2d(layer, batchnorm2d)
-                        fused_conv2d_batchnorm2d_relu6_layer = fuse_conv2d_relu6(fused_conv2d_batchnorm2d_layer, activation)
-                        fused_model.add_module(name, fused_conv2d_batchnorm2d_relu6_layer) 
-                        i += 3
-                        continue
-                if len(next_layers) >= 1:
-                    _, next_layer = next_layers[0]
-                    if isinstance(next_layer, BatchNorm2d):
-                        fused_conv2d_batchnorm2d_layer = fuse_conv2d_batchnorm2d(layer, next_layer)
-                        fused_model.add_module(name, fused_conv2d_batchnorm2d_layer)                         
-                        i += 2
-                        continue
-                    elif isinstance(next_layer, ReLU):
-                        fused_conv2d_relu_layer = fuse_conv2d_relu(layer, next_layer)
-                        fused_model.add_module(name, fused_conv2d_relu_layer)
-                        i += 2
-                        continue
-                    elif isinstance(next_layer, ReLU6):
-                        fused_conv2d_relu6_layer = fuse_conv2d_relu6(layer, next_layer)
-                        fused_model.add_module(name, fused_conv2d_relu6_layer)
-                        i += 2
-                        continue
-                fused_model.add_module(*names_layers[i])
-                i += 1
-
-            elif i+1 < length and isinstance(layer, Linear):
-                _, next_layer = names_layers[i+1]
-                if isinstance(next_layer, ReLU):
-                    fused_linear_relu_layer = fuse_linear_relu(layer, next_layer)
-                    fused_model.add_module(name, fused_linear_relu_layer)
-                    i += 2
-                    continue
-                elif isinstance(next_layer, ReLU6):
-                    fused_linear_relu6_layer = fuse_linear_relu6(layer, next_layer)
-                    fused_model.add_module(name, fused_linear_relu6_layer)
-                    i += 2
-                    continue
-
-                fused_model.add_module(*names_layers[i])
-                i += 1
-
-            else:
-
-                fused_model.add_module(*names_layers[i])
-                i += 1
-
-        return fused_model
-
-        
-
     def init_compress(
         self,
-        config,
-        input_shape,
-        calibration_data = None
+        config: dict,
+        input_shape: tuple,
+        calibration_data: torch.Tensor = None
     ) -> "Sequential":
+        """
+        Initializes the Deep Microcompression (DMC) Pipeline.
         
+        This entry point transforms the standard model into a DMC-optimized
+        candidate by activating the specific pipeline stages described in Section III.
+        
+        It handles the transition between:
+        - Baseline Model 
+        - Pruned Model 
+        - Quantized Model 
+        
+        Args:
+            config: Dictionary defining specific parameters for Pruning (e.g., sparsity)
+                    and Quantization (e.g., 4-bit Static).
+            input_shape: Input tensor dimensions. Critical for:
+                         1. Propagating pruning masks (calculating input/output channels).
+                         2. Generating C-code buffer sizes.
+            calibration_data: A representative dataset (DataLoader).
+                              MANDATORY for Static Quantization (Section III-B) to 
+                              pre-calculate min/max ranges for integer scaling factors.
+                              
+        Returns:
+            A new, independent Sequential instance configured for the requested 
+            compression pipeline.
+        """
+        # Validate configuration against supported DMC schemes
         if not self.is_compression_config_valid(config):
             raise ValueError("Invalid compression configuration!")
         
@@ -431,8 +410,7 @@ class Sequential(nn.Sequential):
 
                 if not isinstance(config["prune_channel"]["sparsity"], (float, int)) or config["prune_channel"]["sparsity"] != 0:
 
-                    def prune_channel_layer(layer):
-                        layer.is_pruned_channel = True
+                    def prune_channel_layer(layer): layer.is_pruned_channel = True
 
                     model.apply(prune_channel_layer)
                     model.init_prune_channel()
@@ -440,10 +418,10 @@ class Sequential(nn.Sequential):
             elif compression_type == "quantize":
                 def quantize_layer(layer):
                     layer.is_quantized = True
-                    # layer.quantize_bitwidth = config["quantize"]["bitwidth"]
-                    # layer.quantize_type = config["quantize"]["type"]
 
                 if config["quantize"]["scheme"] != QuantizationScheme.NONE:
+
+                    # STRICT REQUIREMENT: Static Quantization requires Calibration Data.
                     if config["quantize"]["scheme"] == QuantizationScheme.STATIC and calibration_data is None:
                         raise ValueError(f"Pass a calibration data when doing static quantization!")
 
@@ -454,36 +432,21 @@ class Sequential(nn.Sequential):
 
         return model
         
-    
-    def init_prune_channel(self):
 
-        input_shape = self.__dict__["_dmc"]["input_shape"]
-        sparsity = self.__dict__["_dmc"]["compression_config"]["prune_channel"]["sparsity"]
-        metric = self.__dict__["_dmc"]["compression_config"]["prune_channel"]["metric"]
-
-        keep_prev_channel_index = None
-
-        # Prune all layers except last
-        # for name, layer in list(self.layers.items())[:-1]:
-        for name, layer in list(self.names_layers())[:-1]:
-
-            keep_prev_channel_index = layer.init_prune_channel(
-                sparsity[name], keep_prev_channel_index, input_shape,
-                is_output_layer=False, metric=metric
-            )
-            _, input_shape = layer.get_output_tensor_shape(input_shape)
-
-
-        # Prune last layer
-        name, layer = list(self.names_layers())[-1]
-        keep_prev_channel_index = layer.init_prune_channel(
-            sparsity[name], keep_prev_channel_index, input_shape,
-            is_output_layer=True, metric=metric
-        )
-        return 
-    
 
     def is_compression_config_valid(self, compression_config):
+        """
+        Validates the compression configuration against DMC hardware constraints.
+
+        This method ensures the requested compression parameters are feasible, checks
+        the pruning and quantizations, if the are valid.
+
+        Args:
+            compression_config: Dictionary containing 'prune_channel' and 'quantize' settings.
+
+        Returns:
+            True if configuration is valid and deployable, False otherwise.
+        """
         for configuration_type in compression_config.keys():
 
             if configuration_type == "prune_channel":
@@ -491,6 +454,7 @@ class Sequential(nn.Sequential):
 
                 sparsity = prune_channel_config.get("sparsity")
 
+                # For uniform pruning
                 if isinstance(sparsity, (float, int)):
                     if sparsity == 0:
                         continue
@@ -498,16 +462,20 @@ class Sequential(nn.Sequential):
                     sparsity = dict()
                     for name in self.names():
                         sparsity[name] = layer_sparsity
-
+                # For non uniform pruning, 
                 elif isinstance(sparsity, dict):
                     for name, layer_sparsity in sparsity.items():
+                        # Skip if layer cannot be pruned (
+                        if self[name].get_prune_channel_possible_hypermeters() is None:
+                            continue
                         if not isinstance(layer_sparsity, (float, int)):
                             return False
                             # raise TypeError(f"layer sparsity has to be of type of float or int not {type(layer_sparsity)} for layer {name}!")
                         if name not in self.names():
                             return False
                             # raise NameError(f"Found unknown layer name {name}")
-                        if not isinstance(layer_sparsity, float) and layer_sparsity not in self[name].get_prune_channel_possible_hypermeters():
+                        if not isinstance(layer_sparsity, float) and \
+                            layer_sparsity not in self[name].get_prune_channel_possible_hypermeters():
                             return False
                             # raise ValueError(f"Recieved a layer_sparsity of {layer_sparsity} ")
                     for name in self.names():
@@ -540,7 +508,59 @@ class Sequential(nn.Sequential):
                 # raise ValueError(f"Invalid configuration scheme of {configuration_type}")                
         return True
 
-    def get_prune_channel_possible_hypermeters(self):
+
+    
+    def init_prune_channel(self):
+        """
+        Executes Structured Channel Pruning.
+
+        This method iterates through the network to identify and remove redundant 
+        channels. Crucially, it handles **Dependency Propagation**: removing a 
+        filter in layer `i` necessitates removing the corresponding input channel 
+        in layer `i+1` to preserve connectivity and ensure the resulting model 
+        remains dense.
+
+        Side Effects:
+            - Modifies layers in-place by attaching binary masks to weights.
+            - Updates layer metadata to reflect reduced input/output shapes.
+        """
+        input_shape = self.__dict__["_dmc"]["input_shape"]
+        sparsity = self.__dict__["_dmc"]["compression_config"]["prune_channel"]["sparsity"]
+        metric = self.__dict__["_dmc"]["compression_config"]["prune_channel"]["metric"]
+
+        keep_prev_channel_index = None
+
+        # Prune all layers except last
+        for name, layer in list(self.names_layers())[:-1]:
+
+            keep_prev_channel_index = layer.init_prune_channel(
+                sparsity[name], keep_prev_channel_index, input_shape,
+                is_output_layer=False, metric=metric
+            )
+            _, input_shape = layer.get_output_tensor_shape(input_shape)
+
+
+        # Prune last layer
+        name, layer = list(self.names_layers())[-1]
+        keep_prev_channel_index = layer.init_prune_channel(
+            sparsity[name], keep_prev_channel_index, input_shape,
+            is_output_layer=True, metric=metric
+        )
+        return 
+    
+    def get_prune_channel_possible_hypermeters(self) -> Dict:
+        """
+        Defines the valid search space for Structured Pruning.
+
+        This method queries every layer to determine how many channels can be 
+        pruned while maintaining architectural validity. It is used to generate 
+        the "Sparsity Sensitivity" graphs.
+
+        Returns:
+            Dictionary mapping layer names to their valid pruned channel counts.
+            Note: The output layer is excluded ([:-1]) as its output dimensions 
+            are fixed by the classification task (10 for MNIST, 100 for CIFAR).
+        """
         prune_possible_hypermeters = dict()
 
         for name, layer in list(self.names_layers())[:-1]:
@@ -549,15 +569,28 @@ class Sequential(nn.Sequential):
                 prune_possible_hypermeters[name] = layer_prune_possible_hypermeters
         return prune_possible_hypermeters
     
-    def get_quantize_possible_hyperparameters(self):
+    def get_quantize_possible_hyperparameters(self) -> Dict:
+        """
+        Defines the valid search space for Quantization.
+        """
         return {
             "scheme" : [QuantizationScheme.NONE, QuantizationScheme.DYNAMIC, QuantizationScheme.STATIC],
             "granularity": [None, QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
             "bitwidth" : [None, 2, 4, 8]
         }
     
-    def get_all_compression_hyperparameter(self):
+    def get_all_compression_hyperparameter(self) -> List:
+        """
+        Generates the exhaustive Grid Search space for model optimization.
 
+        This utility creates every possible combination of Pruning and Quantization 
+        configurations. It enables the automated search that identified the 
+        specific configuration.
+
+        Returns:
+            A list of flattened configuration dictionaries, each representing 
+            a unique candidate model state.
+        """
         def flatten_dict(dic, parent_name=""):
             flat_dic = {}
             for name, value in dic.items():
@@ -571,21 +604,12 @@ class Sequential(nn.Sequential):
             return flat_dic
 
         def get_all_combinations(flat_dict: dict[str, object]) -> list[dict[str, object]]:
+            """Generates Cartesian product of all hyperparameter options."""
             keys = list(flat_dict.keys())
             values = list(flat_dict.values())
             product = itertools.product(*values)
 
             return [dict(zip(keys, compression_comb)) for compression_comb in product]
-            # return [
-            #     dict(zip(keys, compression_comb)) for compression_comb in product if self.is_compression_config_valid(
-            #                                                                                     self.decode_compression_dict_hyperparameter(dict(zip(keys, compression_comb))))]
-        # return flatten_dict({
-        #     "prune_channel" : {
-        #         "sparsity" : self.get_prune_channel_possible_hypermeters(),
-        #         "metric" : ["l2", "l1"],
-        #     },
-        #     "quantize" : self.get_quantize_possible_hyperparameters()
-        # })
 
         return get_all_combinations(flatten_dict({
             "prune_channel" : {
@@ -597,7 +621,16 @@ class Sequential(nn.Sequential):
 
 
     def decode_compression_dict_hyperparameter(self, compression_dict):
+        """
+        Reconstructs a hierarchical configuration dictionary from a flattened 
+        search result.
 
+        Args:
+            compression_dict: Flat dict (e.g., {'quantize.bitwidth': 4})
+        
+        Returns:
+            Nested dict (e.g., {'quantize': {'bitwidth': 4}}) suitable for `init_compress`.
+        """
         compression_config = dict()
         for key, value in compression_dict.items():
             names = key.split(".")
@@ -617,7 +650,17 @@ class Sequential(nn.Sequential):
         
     
     def init_quantize(self, calibration_data=None):
+        """
+        Initializes the Quantization stage.
 
+        This method configures the model for low-bitwidth inference. It can run in two modes,
+        Dynamic Quantization and Static Quantization.
+
+        Args:
+            calibration_data: A single batch of representative input data. 
+                              REQUIRED for Static Quantization to measure activation 
+                              dynamic ranges (min/max) before training/deployment.
+        """
         scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
         bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
         granularity = self.__dict__["_dmc"]["compression_config"]["quantize"]["granularity"]
@@ -629,21 +672,99 @@ class Sequential(nn.Sequential):
             for layer in self.layers():
                 layer.init_quantize(bitwidth, scheme, granularity)
             return
-        
+        # We simulate this hardware constraint by placing a Quantize node at the very start of the network.
         setattr(self, "input_quantize", Quantize(
             self, bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC
         ))
         previous_output_quantize = self.input_quantize
         for layer in self.layers():
             previous_output_quantize = layer.init_quantize(bitwidth, scheme, granularity, previous_output_quantize)
-        self.train()
+
+        # We run a forward pass with calibration data to let the observers
+        self.train() # Ensure observers are updating
         if scheme == QuantizationScheme.STATIC:
             self.to(calibration_data.device)
             self(calibration_data)
 
         return
 
+
+
+    def fuse(self, batchnorm_only: bool = False) -> "Sequential":
+        """
+        Fuses adjacent layers to optimize inference speed and reduce footprint.
+
+        Operations performed:
+        1. Conv2d + BatchNorm2d -> Fused Conv2d (folds BN parameters into weights).
+        2. Conv2d + ReLU/ReLU6 -> Fused Conv2d (merges activation).
+        3. Linear + ReLU/ReLU6 -> Fused Linear.
+
+        This step is critical for the "Optimized Model for Inference" (Figure 1),
+        reducing the number of distinct operations the microcontroller must execute.
+
+        Args:
+            batchnorm_only: If True, only folds BatchNorm layers (useful before QAT).
+        
+        Returns:
+            A new Sequential model with fused layers.
+        """
+        names_layers = list(self.names_layers())
+
+        fused_model = Sequential()
+
+        # Helper to preserve DMC metadata (pruning masks/quantization config) 
+        # when transferring to the new fused layer instance.
+        def add_fused_layer(name, layer, fused_layer=None):
+            if fused_layer is not None:
+                init_dmc_parameter(layer, fused_layer)
+                fused_model.add_module(name, fused_layer) 
+            else:
+                fused_model.add_module(name, layer) 
+
+        current_name, current_layer = names_layers[0]
+        for next_name, next_layer in names_layers[1:]:
+            is_fused = False
+            if isinstance(current_layer, Conv2d):
+                if isinstance(next_layer, BatchNorm2d):
+                    fused_layer = fuse_conv2d_batchnorm2d(current_layer, next_layer)
+                    add_fused_layer(current_name, current_layer, fused_layer)
+                    is_fused = True                     
+                elif isinstance(next_layer, ReLU) and not batchnorm_only:
+                    fused_layer = fuse_conv2d_relu(current_layer, next_layer)
+                    add_fused_layer(current_name, current_layer, fused_layer)
+                    is_fused = True                     
+                elif isinstance(next_layer, ReLU6) and not batchnorm_only:
+                    fused_layer = fuse_conv2d_relu6(current_layer, next_layer)
+                    add_fused_layer(current_name, current_layer, fused_layer)
+                    is_fused = True                     
+
+            elif isinstance(current_layer, Linear):
+                if isinstance(next_layer, ReLU)  and not batchnorm_only:
+                    fused_layer = fuse_linear_relu(current_layer, next_layer)
+                    add_fused_layer(current_name, current_layer, fused_layer)
+                    is_fused = True                     
+                elif isinstance(next_layer, ReLU6) and not batchnorm_only:
+                    fused_layer = fuse_linear_relu6(current_layer, next_layer)
+                    add_fused_layer(current_name, current_layer, fused_layer)
+                    is_fused = True            
+
+            # Update pointer for next iteration
+            if is_fused:
+                current_layer = fused_layer
+            else:
+                fused_model.add_module(current_name, current_layer)
+                current_layer = next_layer
+                current_name = next_name
+            
+        fused_model.add_module(current_name, current_layer)
+
+        init_dmc_parameter(self, fused_model)
+
+        return fused_model
+
+        
     def get_size_in_bits(self):
+        """Calculates total model size in bits (Sum of all packed layers)."""
         size = 0
         for layer in self.layers():
             size += layer.get_size_in_bits()
@@ -651,37 +772,65 @@ class Sequential(nn.Sequential):
     
 
     def get_size_in_bytes(self):
+        """
+        Calculates total model binary size in Bytes.
+        """
         return self.get_size_in_bits()//8
 
 
 
     def get_max_workspace_arena(self, input_shape) -> Tuple:
-        """Calculate memory requirements for C deployment by running sample input
+        """
+        Calculates the minimum SRAM (Static RAM) required for inference.
+
+        This method estimates the "Ping-Pong" buffer sizes (Arena A and Arena B) 
+        needed for bare-metal deployment. 
+
+        Strategy:
+        Instead of allocating memory for every intermediate tensor, DMC uses two 
+        shared buffers. Layer i reads from Buffer A and writes to Buffer B. 
+        Layer i+1 reads from Buffer B and writes to Buffer A.
+
+        Args:
+            input_shape: Dimensions of the network input.
         
         Returns:
-            Tuple of (max_even_size, max_odd_size) workspace requirements
+            (max_even_size, max_odd_size): The peak byte requirements for the 
+            two shared buffers.
         """
-        # Create random input tensor based on model's expected input shape
 
         if isinstance(input_shape, tuple):
             input_shape = torch.Size(input_shape)
         
-        # max_output_even_size = input_shape.numel()
         max_output_even_size = 0
         max_output_odd_size = 0
         
+        size_division_because_quant = 1
+        if self.is_quantized:
+            bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
+            size_division_because_quant = (8 // bitwidth)
+
         output_shape = input_shape
-        
         # Track maximum tensor sizes at even/odd layers
         for i, layer in enumerate(self.layers()):
             max_layer_shape, output_shape = layer.get_output_tensor_shape(input_shape)
+
+            # Calculate bytes required (applying packing factor)
+            input_size = math.ceil(input_shape.numel() / size_division_because_quant)
+            max_layer_size = math.ceil(max_layer_shape.numel() / size_division_because_quant)
+
+            # Ping-Pong Logic:
+            # Even layers (0, 2, 4...) write to Buffer B (Odd), read from Buffer A (Even)? 
+            # Actually, this logic calculates the PEAK requirement for the buffer 
+            # *currently holding the data* or *receiving the data*.
             if (i % 2 == 0):
-                max_output_even_size = max(max_output_even_size, input_shape.numel(), max_layer_shape.numel())
+                max_output_even_size = max(max_output_even_size, input_size, max_layer_size)
             else:
-                max_output_odd_size = max(max_output_odd_size, input_shape.numel(), max_layer_shape.numel())
+                max_output_odd_size = max(max_output_odd_size, input_size, max_layer_size)
         
             input_shape = output_shape
-            # print(max_layer_shape, output_shape, i, layer.__class__.__name__)
+
+        # Handle the final output buffer
         if len(self) % 2 == 0:
             max_output_even_size = max(max_output_even_size, output_shape.numel())
         else:
@@ -691,12 +840,29 @@ class Sequential(nn.Sequential):
 
 
     @torch.no_grad()
-    def convert_to_c(self, input_shape, var_name: str, src_dir: str = "./", include_dir:str = "./") -> None:
+    def convert_to_c(self, input_shape, var_name: str, src_dir: str = "./", include_dir:str = "./", test_input = None) -> None:
         """Generate C code for deployment
         
         Args:
             var_name: Base name for generated files
             dir: Output directory for generated files
+        """
+        """
+        Generates the dependency-free C library for bare-metal deployment.
+
+        This method corresponds to the "Encode Model Parameters" -> "Output Continuous 
+        Byte Stream".
+
+        It produces three artifacts:
+        1.  {var_name}.h: Header file defining the model structure and workspace.
+        2.  {var_name}_def.cpp: The model definition linking layers together.
+        3.  {var_name}_params.cpp: The heavy weight data (Bit-Packed arrays).
+
+        Key DMC Features Implemented:
+        - Static Allocation: Calculates `MAX_OUTPUT_EVEN/ODD_SIZE` to define 
+          fixed `int8_t workspace[]` arrays, preventing runtime malloc calls.
+        - Integer Types: If Static Quantization is active, generates `int8_t` 
+          interfaces; otherwise falls back to `float`.
         """
         def write_str_to_c_file(file_str: str, file_name: str, dir: str):
             """Helper to write string to file"""
@@ -730,8 +896,8 @@ class Sequential(nn.Sequential):
             workspace_def = f"float workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
         else:
             workspace_header = (
-                f"#define MAX_OUTPUT_EVEN_SIZE {math.ceil(max_output_even_size/(8//self.input_quantize.bitwidth))}\n"
-                f"#define MAX_OUTPUT_ODD_SIZE {math.ceil(max_output_odd_size/(8//self.input_quantize.bitwidth))}\n"
+                f"#define MAX_OUTPUT_EVEN_SIZE {max_output_even_size}\n"
+                f"#define MAX_OUTPUT_ODD_SIZE {max_output_odd_size}\n"
                 f"extern int8_t workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
             )
             workspace_def = f"int8_t workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
@@ -760,10 +926,7 @@ class Sequential(nn.Sequential):
             param_definition_file += layer_param_def
             definition_file += layer_def 
 
-            _, input_shape = layer.get_output_tensor_shape(input_shape)
-
-            # if isinstance(layer, nn.Linear):
-            #     print("in sequetial linear", layer_param_def[150:])  
+            _, input_shape = layer.get_output_tensor_shape(input_shape)  
         
         layers_def += "};\n"
         definition_file += layers_def
@@ -774,44 +937,33 @@ class Sequential(nn.Sequential):
         write_str_to_c_file(header_file, f"{var_name}.h", include_dir)
         write_str_to_c_file(definition_file, f"{var_name}_def.cpp", src_dir)
         write_str_to_c_file(param_definition_file, f"{var_name}_params.cpp", src_dir)
+
+
+        if test_input is not None:
+
+            bitwidth = None
+            if self.is_quantized:
+                bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
+
+            if self.is_quantized and self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"] == QuantizationScheme.STATIC:
+                _, test_input_def = convert_tensor_to_bytes_var(self.input_quantize.apply(test_input), "test_input", self.input_quantize.bitwidth)
+                # test_input_def = f"\nconst int8_t test_input[] = {{\n"
+                # for line in torch.split(self.input_quantize.apply(test_input).flatten(), 28):
+                #     test_input_def += "    " + ", ".join(
+                #         [f"{val:4d}" for val in line]
+                #     ) + ",\n"
+                # test_input_def += "};\n"
+            else:
+                    _, test_input_def = convert_tensor_to_bytes_var(test_input, "test_input",)
+                    test_input_def = f"\nconst float test_input[] = {{\n"
+                    for line in torch.split(test_input.flatten(), 28):
+                        test_input_def += "    " + ", ".join(
+                            [f"{val:.4f}" for val in line]
+                        ) + ",\n"
+                    test_input_def += "};\n"
+            write_str_to_c_file(test_input_def, f"{var_name}_test_input.h", include_dir)
+
         return
-
-
-    @torch.no_grad
-    def test(self, device:str = "cpu", include_dir="./", src_dir="./", var_name="model"):
-
-        import random
-        index = random.randint(0, self.test_input.size(0)-1)
-        # index = 0
-
-        test_input = self.test_input[index]
-        test_output = self(test_input.unsqueeze(dim=0).clone().to(device))
-
-        if self.is_quantized and self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"] == QuantizationScheme.STATIC:
-            _, test_input_def = convert_tensor_to_bytes_var(self.input_quantize.apply(test_input), "test_input", self.input_quantize.bitwidth)
-            # test_input_def = f"\nconst int8_t test_input[] = {{\n"
-            # for line in torch.split(self.input_quantize.apply(test_input).flatten(), 28):
-            #     test_input_def += "    " + ", ".join(
-            #         [f"{val:4d}" for val in line]
-            #     ) + ",\n"
-            # test_input_def += "};\n"
-
-            test_output = self.output_quantize.apply(test_output)
-
-        else:
-
-            test_input_def = f"\nconst float test_input[] = {{\n"
-            for line in torch.split(test_input.flatten(), 28):
-                test_input_def += "    " + ", ".join(
-                    [f"{val:.4f}" for val in line]
-                ) + ",\n"
-            test_input_def += "};\n"
-
-
-        with open(path.join(include_dir, f"{var_name}_test_input.h"), "w") as file:
-            file.write(test_input_def)
-
-        return test_output
 
 
     def get_layers_prune_channel_sensity(
@@ -828,7 +980,21 @@ class Sequential(nn.Sequential):
         lr_scheduler = None,
         callbacks = [],
     ) -> Dict[str, Dict[str, List[Tuple[int, float]]]]:
+    
+        """
+        Performs Layer-wise Sensitivity Analysis.
 
+        This method isolates each layer and prunes it at varying sparsity levels 
+        while keeping other layers dense. It quantifies the "collapse point" where 
+        accuracy degrades significantly.
+
+        Args:
+            train: If True, performs "Retraining" (Fine-tuning) after pruning to 
+                   measure accuracy recovery (Fig 3b vs 3a).
+        
+        Returns:
+            Nested Dictionary: {metric -> {layer_name -> [(sparsity_ratio, acc_before, acc_after)]}}
+        """
         if train:
             assert train_dataloader is not None
             assert epochs is not None
@@ -838,7 +1004,7 @@ class Sequential(nn.Sequential):
         prune_channel_hp = self.get_prune_channel_possible_hypermeters()
         prune_channel_layers_sensity = {metric_name: dict() for metric_name in metrics.keys()}
 
-        for layer_name, layer_prune_channel_hp in prune_channel_hp.items():
+        for layer_name, layer_prune_channel_hp in tqdm(prune_channel_hp.items()):
 
             for metric_name in metrics.keys():
                 prune_channel_layers_sensity[metric_name].update({layer_name : list()})
@@ -893,10 +1059,24 @@ class Sequential(nn.Sequential):
         train_dataloader = None,
         epochs = None,
         criterion_fun = None,
-        optimizer_fun = None,
         lr_scheduler = None,
         callbacks = [],
+        random_seed = None
     ) -> List:
+        """
+        Generates data for Neural Architecture Search (NAS) / Random Search.
+
+        It randomly samples valid channel counts for ALL layers simultaneously 
+        to explore the global sparsity space, rather than just local sensitivity.
+
+        Args:
+            num_data: Number of random architectures to sample.
+        
+        Returns:
+            List of [param_1, param_2, ..., param_n, accuracy] vectors.
+        """
+        import random
+        if random_seed: random.seed(random_seed)
         
         def get_all_combinations(flat_dict: dict[str, Iterable]):
             keys = list(flat_dict.keys())
@@ -909,8 +1089,6 @@ class Sequential(nn.Sequential):
             assert train_dataloader is not None
             assert epochs is not None
             assert criterion_fun is not None
-            assert optimizer_fun is not None
-
 
         prune_channel_hp = self.get_prune_channel_possible_hypermeters()
         param = []
