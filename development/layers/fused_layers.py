@@ -1,3 +1,22 @@
+"""
+@file fused_layers.py
+@brief Composite Layers for Optimized Inference.
+
+This module implements the fused layer structures (Conv+ReLU, Linear+ReLU) 
+created by `fuse.py`.
+
+Role in DMC Pipeline:
+1.  Memory Efficiency: By performing the activation function 
+    immediately after the MAC (Multiply-Accumulate) operation—while the value 
+    is still in the CPU register/accumulator—we avoid storing the intermediate 
+    pre-activation tensor to the SRAM workspace. This is critical for fitting 
+    models like LeNet-5 into the 2KB RAM of the ATmega32.
+    
+2.  C-Code Generation: These classes allow the `convert_to_c` 
+    engine to generate unified C loops (e.g., `acc = max(0, acc)`) rather than 
+    separate function calls.
+"""
+
 import torch
 from torch import nn
 
@@ -10,7 +29,7 @@ from .activation import ReLU, ReLU6
 class LinearReLU(Linear):
 
     def __init__(self, *args, **kwargs):
-
+        """Fused Linear + ReLU Layer"""
         super().__init__(*args, **kwargs)
         self.relu = ReLU()
 
@@ -45,7 +64,7 @@ class LinearReLU(Linear):
 
 
 class LinearReLU6(Linear):
-
+    """Fused Linear + ReLU6 Layer."""
     def __init__(self, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
@@ -81,7 +100,7 @@ class LinearReLU6(Linear):
 
 
 class Conv2dReLU(Conv2d):
-
+    """Fused Conv2d + ReLU Layer."""
     def __init__(self, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
@@ -122,7 +141,7 @@ class Conv2dReLU(Conv2d):
     
 
 class Conv2dReLU6(Conv2d):
-
+    """Fused Conv2d + ReLU6 Layer."""
     def __init__(self, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
