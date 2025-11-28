@@ -1,12 +1,13 @@
 """
 @file linear.py
-@brief PyTorch implementation of Linear layer with support for:
-    1. Standard floating-point operation
-    2. Dynamic/static quantization (per-tensor and per-channel)
-    3. Channel pruning
-    4. C code generation for deployment
-"""
+@brief Linear (Fully Connected) Layer for DMC Pipeline.
 
+This class implements the "Dense" layers of the network (e.g., `linear_0`, `linear_1` in LeNet-5).
+In the DMC experiments (Section IV-A), these layers often account for the majority of the 
+model's storage footprint, making them prime targets for:
+1.  Structured Pruning: Removing neurons reduces the matrix dimensions physically.
+2.  Bit-Packing: Compressing the large weight matrices into 4-bit/2-bit streams.
+"""
 __all__ = [
     "Linear"
 ]
@@ -33,13 +34,15 @@ from ..utils import (
 )
 
 class Linear(Layer, nn.Linear):
-    """Quantization-aware Linear layer with support for:
-        - Standard linear operation
-        - Dynamic/static quantization (per-tensor and per-channel)
-        - Model pruning
-        - C code generation for deployment
     """
-
+    DMC-Optimized Linear Layer.
+    
+    Supports:
+    - Sensitivity Analysis: exposing hyperparameter ranges for pruning search.
+    - Dependency Propagation: pruning input weights based on previous layer's mask.
+    - Hardware-Aware Packing: exporting weights in packed `int8` format.
+    """
+    
     def __init__(self, *args, **kwargs):
         """Initialize Linear layer with standard PyTorch parameters"""
         super().__init__(*args, **kwargs)
@@ -58,13 +61,14 @@ class Linear(Layer, nn.Linear):
 
         if self.is_compressed:
             if self.is_pruned_channel:
+                # Structured Pruning: Mask out removed neurons/connections
                 weight = self.weight_prune_channel(weight)
                 if self.bias is not None:
                     bias = self.bias_prune_channel(bias)
 
+            # Quantization: Simulate integer precision loss
             if self.is_quantized:
-                # if hasattr(self, "input_quantize"): 
-                #     input = self.input_quantize(input)
+                # Note: Input is already quantized by previous layer's output_quantize
                 weight = self.weight_quantize(weight)
                 if self.bias is not None and hasattr(self, "bias_quantize"):
                     bias = self.bias_quantize(bias)
@@ -72,6 +76,7 @@ class Linear(Layer, nn.Linear):
         output = nn.functional.linear(input, weight, bias)
         
         if self.is_compressed:
+            # Rescalling
             if self.is_quantized:
                 if hasattr(self, "output_quantize"):
                     output = self.output_quantize(output)
@@ -90,17 +95,27 @@ class Linear(Layer, nn.Linear):
             is_output_layer: bool = False, 
             metric: str = "l2"
         ) -> Optional[torch.Tensor]:
-        """Prune channels based on importance metric
+        """
+        Executes Structured Pruning logic (Section III-A).
+        
+        For a Linear layer, "Channel Pruning" equates to "Neuron Pruning".
+        
+        Operations:
+        1.  Input Dimension Reduction: Uses `keep_prev_channel_index` (from the 
+            previous Flatten/Linear/Conv layer) to physically remove input columns.
+        2.  Output Dimension Reduction: Calculates neuron importance (L2 norm) 
+            and removes the least important rows (neurons).
         
         Args:
-            sparsity: Target sparsity ratio (0-1)
-            keep_prev_channel_index: Channels to keep from previous layer
-            is_output_layer: Flag if this is an output layer
-            metric: Importance metric ("l2" or absolute value)
+            sparsity: Amount to prune (float 0.0-1.0 or integer count).
+            keep_prev_channel_index: Indices of valid inputs.
+            is_output_layer: If True, output neurons (classes) are NEVER pruned.
+            metric: Importance criteria ('l2' or 'l1').
             
         Returns:
-            Indices of kept channels
+            Indices of kept output neurons (to be passed to next layer).
         """
+        # Convert sparsity ratio to integer count of Pruned Channels
         if isinstance(sparsity, float):
             sparsity = min(max(0., sparsity), 1.)
             sparsity = int(sparsity * self.out_features)
@@ -111,7 +126,7 @@ class Linear(Layer, nn.Linear):
         sparsity = min(max(0, sparsity), self.out_features-1)
         density = self.out_features - sparsity
 
-
+        # Handle Output Neurons (Rows)
         if keep_prev_channel_index is None:
             keep_prev_channel_index = torch.arange(self.in_features)
 
@@ -124,35 +139,47 @@ class Linear(Layer, nn.Linear):
             importance = self.weight.pow(2) if metric == "l2" else self.weight.abs()
             channel_importance = importance.sum(dim=[1])
             keep_current_channel_index = torch.sort(torch.topk(channel_importance, density, dim=0).indices).values
-
-        # setattr(self, "weight_prune_channel", Prune_Channel(
-        #     module=self, keep_current_channel_index=keep_current_channel_index, keep_prev_channel_index=keep_prev_channel_index
-        # ))
-
-        # if self.bias is not None:
-        #     setattr(self, "bias_prune_channel", Prune_Channel(
-        #         module=self, keep_current_channel_index=keep_current_channel_index
-        #     ))
-
-        self.register_buffer("keep_current_channel_index", keep_current_channel_index.to(self.weight.device))
-        self.register_buffer("keep_prev_channel_index", keep_prev_channel_index.to(self.weight.device))
+               
+        # Store Indices
+        keep_prev_channel_index = keep_prev_channel_index.to(self.weight.device)
+        keep_current_channel_index = keep_current_channel_index.to(self.weight.device)
 
         setattr(self, "weight_prune_channel", Prune_Channel(
-            module=self, keep_current_channel_index=self.keep_current_channel_index, keep_prev_channel_index=self.keep_prev_channel_index
+            layer=self, keep_current_channel_index=keep_current_channel_index, keep_prev_channel_index=self.keep_prev_channel_index
         ))
 
         if self.bias is not None:
             setattr(self, "bias_prune_channel", Prune_Channel(
-                module=self, keep_current_channel_index=self.keep_current_channel_index
+                layer=self, keep_current_channel_index=keep_current_channel_index
             ))
         return keep_current_channel_index
 
 
     def get_prune_channel_possible_hypermeters(self):
+        """
+        Returns search space for Sensitivity Analysis.
+        Allows testing every possible neuron count from 1 to N.
+        """
         return range(self.out_features)
 
     @torch.no_grad()
-    def init_quantize(self, bitwidth, scheme, granularity, previous_output_quantize=None):
+    def init_quantize(
+        self, 
+        bitwidth: int, 
+        scheme: QuantizationScheme, 
+        granularity: QuantizationGranularity, 
+        previous_output_quantize: Optional[Quantize] = None
+    ):
+        """
+        Sets up Quantization Observers.
+        
+        Key Logic:
+        - Weights: Symmetric Quantization (Int8/4/2).
+        - Inputs/Outputs: Asymmetric (UInt8/Int8).
+        - Bias: 32-bit Symmetric. Scale is constrained to `input_scale * weight_scale`
+          to allow efficient integer MAC operations.
+        """
+        # Weight Quantizer
         if not self.is_pruned_channel:
             setattr(self, "weight_quantize", Quantize(
                 self, bitwidth, scheme, granularity, scale_type=QuantizationScaleType.SYMMETRIC
@@ -162,8 +189,9 @@ class Linear(Layer, nn.Linear):
                 self, bitwidth, scheme, granularity, scale_type=QuantizationScaleType.SYMMETRIC, prune_channel=self.weight_prune_channel
             ))
 
+        # Input/Output Quantizers (Required for Static Scheme)
         if scheme == QuantizationScheme.STATIC:
-            assert previous_output_quantize is not None
+            assert previous_output_quantize is not None, "Pass a quantizer for the input, it is usually from the preceeding layer."
             setattr(self, "input_quantize", Quantize(
                 self, bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC, base=[previous_output_quantize]
             ))
@@ -171,6 +199,7 @@ class Linear(Layer, nn.Linear):
                 self, bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC
             ))
 
+        # Bias Quantizer
         if self.bias is not None:
             if not self.is_pruned_channel:
                 if scheme == QuantizationScheme.STATIC:
@@ -186,14 +215,17 @@ class Linear(Layer, nn.Linear):
         # calibration
         if scheme == QuantizationScheme.DYNAMIC:
             self.weight_quantize.update_parameters(self.weight) 
-            # if self.bias is not None:
-            #     self.bias_quantize.update_parameters(self.bias)
+
         if hasattr(self, "output_quantize"):
             return self.output_quantize 
         return None
 
     @torch.no_grad()
     def get_size_in_bits(self):  
+        """
+        Calculates compressed model size.
+        Includes overhead for quantization parameters (Scales/Zero-points).
+        """
         weight, bias = self.get_compression_parameters()
 
         is_packed = False
@@ -207,7 +239,8 @@ class Linear(Layer, nn.Linear):
             weight_bitwidth = self.weight_quantize.bitwidth
             if self.bias is not None and hasattr(self, "bias_quantize"):
                 bias_bitwidth = self.bias_quantize.bitwidth
-            # extra parameters
+
+            # Add storage cost for Quantization Metadata (Scales/ZP)
             if self.weight_quantize.scheme == QuantizationScheme.DYNAMIC:
                 size += get_size_in_bits(self.weight_quantize.scale)
             elif self.weight_quantize.scheme == QuantizationScheme.STATIC:
@@ -221,6 +254,7 @@ class Linear(Layer, nn.Linear):
                     bias_scale = self.input_quantize.scale * self.weight_quantize.scale
                 size += get_size_in_bits(bias_scale)
         
+        # Add storage cost for Weights and Biases (Potentially Bit-Packed)
         size += get_size_in_bits(weight, is_packed=is_packed, bitwidth=weight_bitwidth)
         if self.bias is not None:
             size += get_size_in_bits(bias, is_packed=is_packed, bitwidth=bias_bitwidth)  
@@ -231,43 +265,48 @@ class Linear(Layer, nn.Linear):
 
     @torch.no_grad()
     def get_compression_parameters(self) -> Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
-
+        """Returns the final hard-pruned and hard-quantized tensors."""
         weight = self.weight
         bias = self.bias
 
         if self.is_compressed:
 
+            # Hard Pruning (Slicing)
             if self.is_pruned_channel:
                 weight = self.weight_prune_channel.apply(weight)
                 if self.bias is not None:
                     bias = self.bias_prune_channel.apply(bias)
 
+            # Hard Quantization (Float -> Int)
             if self.is_quantized:
                     weight = self.weight_quantize.apply(weight)
                     if self.bias is not None and hasattr(self, "bias_quantize"):
                         bias = self.bias_quantize.apply(bias)
-                        # print("compression in linear", bias.dtype, bias.shape)
-                    
+        
         return weight, bias
 
 
-    def get_output_tensor_shape(self, input_shape):
+    def get_output_tensor_shape(self, input_shape) -> tuple[torch.Size, torch.Size]:
+        """Calculates output shape for memory planning."""
         out_features, _ = self.get_compression_parameters()[0].size()
         return torch.Size((out_features,)), torch.Size((out_features,))
     
 
     @torch.no_grad()
     def convert_to_c(self, var_name, input_shape):
-        """Generate C code declarations for this layer
+        """
+        Generates C code for deployment (Stage 3).
         
-        Args:
-            var_name: Variable name to use in generated code
+        Produces one of three C constructor variants:
+        1.  Float: Standard `float*` pointers (Baseline).
+        2.  Dynamic: `int8_t` weights, `float` bias/scales (Reference).
+        3.  Static (DMC): Fully integer. `int8_t` weights, `int32_t` bias.
+            Includes `zero_point` parameters for hardware-aware unpacking.
             
         Returns:
-            Tuple of (header declaration, layer definition, parameter definition)
+            (Header String, Definition String, Parameter Blob String)
         """
 
-        # if self.bias is not None:
         weight, bias = self.get_compression_parameters()
         
         output_feature_size, input_feature_size = weight.size()
@@ -275,6 +314,7 @@ class Linear(Layer, nn.Linear):
         weight_bitwidth = None
         if self.is_quantized:
             weight_bitwidth = self.weight_quantize.bitwidth
+
         # Convert weights to C representation
         param_header, param_def = convert_tensor_to_bytes_var(
             weight, 
@@ -393,73 +433,6 @@ class Linear(Layer, nn.Linear):
             layer_header += param_header
             layer_param_def += param_def
 
-        
-        # else:
-        #     weight = self.get_compression_parameters()
-            
-        #     output_feature_size, input_feature_size = weight.size()
-
-        #     weight_bitwidth = None
-        #     if self.is_quantized:
-        #         weight_bitwidth = self.weight_quantize.bitwidth
-        #     # Convert weights to C representation
-        #     param_header, param_def = convert_tensor_to_bytes_var(
-        #         weight, 
-        #         f"{var_name}_weight", 
-        #         weight_bitwidth
-        #     )   
-        #     layer_header = param_header
-        #     layer_param_def = param_def
-
-
-        #     q_type = None
-        #     if self.is_quantized:
-        #         q_type = self.weight_quantize.type
-
-
-        #     if q_type is None or q_type == QUANTIZATION_NONE:
-        #         layer_def = f"{self.__class__.__name__} {var_name}({output_feature_size}, {input_feature_size}, (float*){var_name}_weight, nullptr);\n"
-
-        #     elif q_type == DYNAMIC_QUANTIZATION_PER_TENSOR:
-        #         layer_def = f"{self.__class__.__name__} {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, *(float*){var_name}_weight_scale, nullptr);\n"
-                
-        #         param_header, param_def = convert_tensor_to_bytes_var(
-        #                                     self.weight_quantize.scale,
-        #                                     f"{var_name}_weight_scale"
-        #                                 )
-        #         layer_header += param_header
-        #         layer_param_def += param_def
-            
-        #     elif q_type == STATIC_QUANTIZATION_PER_TENSOR:
-
-        #         layer_def = (
-        #             f"{self.__class__.__name__} {var_name}({output_feature_size}, {input_feature_size}, "
-        #             f"{self.output_quantize.scale}, {self.output_quantize.zero_point}, {self.input_quantize.zero_point}, "
-        #             f"(int8_t*){var_name}_weight, nullptr, *(float*){var_name}_bias_scale);\n"
-        #         ) 
-
-        #         param_header, param_def = convert_tensor_to_bytes_var(
-        #             self.output_quantize.scale, 
-        #             f"{var_name}_output_scale"
-        #         )
-        #         layer_header += param_header
-        #         layer_param_def += param_def
-
-        #         param_header, param_def = convert_tensor_to_bytes_var(
-        #             self.output_quantize.zero_point, 
-        #             f"{var_name}_output_zero_point"
-        #         )
-        #         layer_header += param_header
-        #         layer_param_def += param_def
-
-        #         param_header, param_def = convert_tensor_to_bytes_var(
-        #             self.bias_quantize.scale, 
-        #             f"{var_name}_bias_scale"
-        #         )
-        #         layer_header += param_header
-        #         layer_param_def += param_def
-   
 
         layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
-        # print("----------->layer_param_def_100", layer_param_def[100:])
         return layer_header, layer_def, layer_param_def
