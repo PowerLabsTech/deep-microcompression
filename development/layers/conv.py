@@ -19,18 +19,19 @@ import torch
 from torch import nn
 
 from .layer import Layer
-from ..compressors import Prune_Channel, Quantize
+from ..compressors import (
+    Prune_Channel, 
+    Quantize,
+    QuantizationScheme,
+    QuantizationScaleType,
+    QuantizationGranularity
+)
 
 from ..utils import (
     convert_tensor_to_bytes_var,
-
-    QuantizationScheme,
-    QuantizationScaleType,
-    QuantizationGranularity,
+    get_size_in_bits,
 
     STATIC_BIAS_BITWDHT,
-
-    get_size_in_bits
 )
 
 
@@ -372,7 +373,7 @@ class Conv2d(Layer, nn.Conv2d):
         weight_bitwidth = None
         if self.is_quantized:
             weight_bitwidth = self.weight_quantize.bitwidth
-            
+
         # Convert weights to C representation
         param_header, param_def = convert_tensor_to_bytes_var(
             weight, 

@@ -16,14 +16,12 @@ Key Features:
 
 from typing import Optional, Iterable, Callable, Tuple
 from math import prod
+from enum import Enum, auto
 
 import torch
 
 from .prune_channel import Prune_Channel
 from ..utils import (
-    QuantizationScheme,
-    QuantizationScaleType,
-    QuantizationGranularity,
 
     get_quantize_scale_sy,
     get_quantize_scale_zero_point_assy,
@@ -40,6 +38,20 @@ from ..utils import (
 )
 
 
+
+class QuantizationScheme(Enum):
+    NONE = auto()
+    DYNAMIC = auto()
+    STATIC = auto()
+
+class QuantizationScaleType(Enum):
+    SYMMETRIC = auto()
+    ASSYMMETRIC = auto()
+
+class QuantizationGranularity(Enum):
+    PER_TENSOR = auto()
+    PER_CHANNEL = auto()
+    
 
 class Quantize:
     """

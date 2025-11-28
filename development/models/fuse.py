@@ -99,9 +99,9 @@ def fuse_conv2d_batchnorm2d(conv2d, batchnorm2d):
     )
     fused_layer.weight.copy_(conv2d.weight * batchnorm2d.folded_weight.view(-1,1,1,1))
     if conv2d.bias is not None:
-        fused_layer.bias.copy_(conv2d.bias * batchnorm2d.folded_weight + batchnorm2d.folded_bias)
+        fused_layer.bias.copy_(conv2d.bias * batchnorm2d.folded_weight + batchnorm2d.folded_bias) # type: ignore
     else:
-        fused_layer.bias.copy_(batchnorm2d.folded_bias)
+        fused_layer.bias.copy_(batchnorm2d.folded_bias) # type: ignore
 
     return fused_layer
 

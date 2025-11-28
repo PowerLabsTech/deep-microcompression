@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, Union, Optional, Any
 
+from ..compressors import QuantizationScheme, QuantizationGranularity, Quantize
 import torch
 
 class Layer(ABC):
@@ -61,9 +62,9 @@ class Layer(ABC):
     def init_quantize(
         self, 
         bitwidth: int, 
-        scheme: str, 
-        granularity: str, 
-        previous_output_quantize: Any = None
+        scheme: QuantizationScheme, 
+        granularity: QuantizationGranularity, 
+        previous_output_quantize: Optional[Quantize] = None
     ):
         """
         Quantization Setup.

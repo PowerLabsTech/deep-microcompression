@@ -19,18 +19,19 @@ import torch
 from torch import nn
 
 from .layer import Layer
-from ..compressors import Prune_Channel, Quantize
-
-from ..utils import (
-    convert_tensor_to_bytes_var,
-
-    get_size_in_bits,
-
-    STATIC_BIAS_BITWDHT,
-
+from ..compressors import (
+    Prune_Channel, 
+    Quantize,
     QuantizationScheme,
     QuantizationScaleType,
     QuantizationGranularity
+)
+
+from ..utils import (
+    convert_tensor_to_bytes_var,
+    get_size_in_bits,
+
+    STATIC_BIAS_BITWDHT,
 )
 
 class Linear(Layer, nn.Linear):

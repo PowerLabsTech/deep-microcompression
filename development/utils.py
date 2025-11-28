@@ -7,27 +7,13 @@ import struct
 import math
 from enum import Enum, auto
 
-from typing import Any, Tuple
+from typing import Any, Tuple, Optional
 
 import torch
 from torch import nn
 
 
 # Quantization type constants
-
-class QuantizationScheme(Enum):
-    NONE = auto()
-    DYNAMIC = auto()
-    STATIC = auto()
-
-class QuantizationScaleType(Enum):
-    SYMMETRIC = auto()
-    ASSYMMETRIC = auto()
-
-class QuantizationGranularity(Enum):
-    PER_TENSOR = auto()
-    PER_CHANNEL = auto()
-    
 
 STATIC_BIAS_BITWDHT = 32
 
@@ -39,6 +25,12 @@ INT32_BYTE_PER_LINE = 4
 
 
 class RoundSTE(torch.autograd.Function):
+    """
+    Straight-Through Estimator (STE) for Rounding.
+    
+    During Forward pass: returns round(input).
+    During Backward pass: passes gradient through unchanged (identity).
+    """
     @staticmethod
     def forward(ctx, input) -> torch.Tensor:
         return torch.round(input)
@@ -465,7 +457,7 @@ def pack_int_to_byte(byte_list, bitwidth):
 
 def convert_tensor_to_bytes_var(tensor: torch.Tensor, 
                                var_name: str, 
-                               bitwidth: int = 8) -> tuple:
+                               bitwidth: Optional[int] = 8) -> tuple:
     """Convert tensor to C-style byte array declaration
     
     Args:
@@ -493,11 +485,12 @@ def convert_tensor_to_bytes_var(tensor: torch.Tensor,
         # Standard byte conversion for non-packed data
         for line in torch.split(tensor.flatten(), byte_per_line):
             var_def_str += "    " + ", ".join(
-                [f"0x{b:02X}" for val in line for b in byte_convert(val)]
+                [f"0x{b:02X}" for val in line.tolist() for b in byte_convert(val)]
             ) + ",\n"
     else:
         # Special handling for packed data (4-bit, 2-bit, etc.)
-        data_per_byte = 8 // bitwidth
+        if bitwidth is not None:
+            data_per_byte = 8 // bitwidth
             # for i in range(math.ceil(len(line)/data_per_byte)):
         tensor = tensor.flatten()
 
@@ -510,21 +503,20 @@ def convert_tensor_to_bytes_var(tensor: torch.Tensor,
 
         for line in torch.split(tensor.flatten(), INT8_BYTE_PER_LINE * data_per_byte):
             bytes = []
-            data_per_byte = 8 // bitwidth
-            for i in range(len(line)//data_per_byte):
+            for i in range(math.ceil(len(line)/data_per_byte)):
                 data = []
                 for pos in range(data_per_byte):
                     data.append(line[(i*data_per_byte)+pos])
                 # bytes.append(byte_convert(data))
                 bytes.append(pack_int_to_byte(data, bitwidth))
 
-            if len(line)%data_per_byte != 0:
-                data = []
-                i = len(line)//data_per_byte
-                for pos in range(len(line)%data_per_byte):
-                    data.append(line[(i*data_per_byte)+pos])
-                    # bytes.append(byte_convert(data))
-                    bytes.append(pack_int_to_byte(data, bitwidth))
+            # if len(line)%data_per_byte != 0:
+            #     data = []
+            #     i = len(line)//data_per_byte
+            #     for pos in range(len(line)%data_per_byte):
+            #         data.append(line[(i*data_per_byte)+pos])
+            #         # bytes.append(byte_convert(data))
+            #         bytes.append(pack_int_to_byte(data, bitwidth))
 
             var_def_str += "    " + ", ".join(
                 [f"0x{b:02X}" for val in bytes for b in val]

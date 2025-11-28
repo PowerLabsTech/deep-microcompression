@@ -37,13 +37,13 @@ from ..layers.linear import Linear
 from ..layers.batchnorm import BatchNorm2d
 from ..layers.activation import ReLU, ReLU6
 
-from ..compressors import Quantize
-from ..utils import (
-    convert_tensor_to_bytes_var,
+from ..compressors import (
+    Quantize,
     QuantizationScheme,
     QuantizationScaleType,
     QuantizationGranularity,
 )
+from ..utils import convert_tensor_to_bytes_var
 from .fuse import *
 
 class Sequential(nn.Sequential):
@@ -53,6 +53,8 @@ class Sequential(nn.Sequential):
         - Training utilities
         - C code generation
     """
+
+    _modules: dict[str, Layer]
 
     def __init__(self, *args):
         """Initialize Sequential model with automatic layer naming
@@ -76,7 +78,7 @@ class Sequential(nn.Sequential):
                     idx = self.class_idx.get(layer.__class__.__name__, -1) + 1
                     self.class_idx[layer.__class__.__name__] = idx
                     layer_type = layer.__class__.__name__.lower()
-                    self.add_module(f"{layer_type}_{idx}", layer)
+                    self.add_module(f"{layer_type}_{idx}", layer) # type: ignore
                 else:
                     raise TypeError(f"layer of type {type(layer)} isn't a Layer or Module.")
 
@@ -207,11 +209,11 @@ class Sequential(nn.Sequential):
 
 
     def fit(
-        self, train_dataloader: Union[data.DataLoader, Tuple], epochs: int, 
+        self, train_dataloader: data.DataLoader, epochs: int, 
         criterion_fun: torch.nn.Module, 
         optimizer_fun: torch.optim.Optimizer,
         lr_scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
-        validation_dataloader: Optional[Union[data.DataLoader, Tuple]] = None, 
+        validation_dataloader: Optional[data.DataLoader] = None, 
         metrics: Dict[str, Callable[[torch.Tensor, torch.Tensor], float]] = {},
         verbose: bool = True,
         callbacks: List[Callable] = [],
@@ -370,7 +372,7 @@ class Sequential(nn.Sequential):
         self,
         config: dict,
         input_shape: tuple,
-        calibration_data: torch.Tensor = None
+        calibration_data: Optional[torch.Tensor] = None
     ) -> "Sequential":
         """
         Initializes the Deep Microcompression (DMC) Pipeline.
