@@ -57,8 +57,6 @@ class MaxPool2d(Layer, nn.MaxPool2d):
         metric: str = "l2"
     ):
         """Placeholder for channel pruning (MaxPool doesn't have weights to prune)"""
-        super().init_prune_channel()
-        # Nothing to do
         return keep_prev_channel_index
 
 
@@ -163,7 +161,6 @@ class AvgPool2d(Layer, nn.AvgPool2d):
         metric: str = "l2"
     ):
         """Placeholder for channel pruning (MaxPool doesn't have weights to prune)"""
-        super().init_prune_channel()
         # Nothing to do
         return keep_prev_channel_index
 
