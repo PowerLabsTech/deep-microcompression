@@ -17,9 +17,6 @@ from math import prod
 
 import torch
 
-from ..layers.layer import Layer
-
-
 class Prune_Channel:
     """
     Manages channel pruning masks and physical tensor reduction.
@@ -29,7 +26,7 @@ class Prune_Channel:
     """
     def __init__(
         self, 
-        layer: Layer, 
+        layer, 
         keep_current_channel_index: torch.Tensor, 
         keep_prev_channel_index: Optional[torch.Tensor] = None,
     ) -> None:

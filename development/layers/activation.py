@@ -12,17 +12,18 @@ import torch
 from torch import nn
 
 from ..utils import (
-    QuantizationScheme,
-    QuantizationScaleType,
-    QuantizationGranularity,
-
     quantize_per_tensor_assy,
     get_size_in_bits,
 
     convert_tensor_to_bytes_var
 )
 from .layer import Layer
-from ..compressors import Quantize
+from ..compressors import (
+    Quantize,
+    QuantizationScheme,
+    QuantizationScaleType,
+    QuantizationGranularity,
+)
 
 
 class ReLU(Layer, nn.ReLU):
