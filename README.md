@@ -165,26 +165,3 @@ int main(void) {
     }
 }
 ```
-
------
-
-## 📑 Citation
-
-If you use Deep MicroCompression in your research, please refer to the project repository or the associated paper:
-
-```bibtex
-@article{dmc2024,
-  title={Deep Microcompression: Structured Pruning and Bit-packed Quantization for Microcontrollers},
-  author={Surname, Name and Surname, Name},
-  journal={IEEE/ACM Proceedings},
-  year={2024}
-}
-```
-
------
-
-**License:** MIT
-**Authors:** [Your Name/Org]
-
-```
-```
