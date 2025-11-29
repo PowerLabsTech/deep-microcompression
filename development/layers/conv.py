@@ -186,7 +186,7 @@ class Conv2d(Layer, nn.Conv2d):
         keep_current_channel_index = keep_current_channel_index.to(self.weight.device)
 
         setattr(self, "weight_prune_channel", Prune_Channel(
-            layer=self, keep_current_channel_index=keep_current_channel_index, keep_prev_channel_index=self.keep_prev_channel_index
+            layer=self, keep_current_channel_index=keep_current_channel_index, keep_prev_channel_index=keep_prev_channel_index
         ))
 
         if self.bias is not None:

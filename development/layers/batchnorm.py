@@ -77,7 +77,7 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
         # BatchNorm doesn't reduce channels itself; it just mirrors the input.
         # So it passes the 'keep' indices forward unchanged.
         setattr(self, "prune_channel", Prune_Channel(
-            module=self, keep_current_channel_index=keep_prev_channel_index
+            layer=self, keep_current_channel_index=keep_prev_channel_index
         ))
         return keep_prev_channel_index
     
