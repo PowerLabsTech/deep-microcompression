@@ -41,8 +41,6 @@ INPUT_SHAPE = (1, 28, 28)
 torch.manual_seed(LUCKY_NUMBER)
 if DEVICE == "cuda":
     torch.cuda.manual_seed(LUCKY_NUMBER)
-torch.manual_seed(LUCKY_NUMBER)
-torch.cuda.manual_seed(LUCKY_NUMBER)
 # cuDNN determinism
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
