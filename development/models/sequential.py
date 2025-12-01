@@ -808,15 +808,19 @@ class Sequential(nn.Sequential):
         max_output_odd_size = 0
         
         size_division_because_quant = 1
+        
+        scheme = None
         if self.is_quantized:
-            bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
-            size_division_because_quant = (8 // bitwidth)
+            scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
+
+            if scheme == QuantizationScheme.STATIC:
+                bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
+                size_division_because_quant = (8 // bitwidth)
 
         output_shape = input_shape
         # Track maximum tensor sizes at even/odd layers
         for i, layer in enumerate(self.layers()):
             max_layer_shape, output_shape = layer.get_output_tensor_shape(input_shape)
-
             # Calculate bytes required (applying packing factor)
             input_size = math.ceil(input_shape.numel() / size_division_because_quant)
             max_layer_size = math.ceil(max_layer_shape.numel() / size_division_because_quant)
