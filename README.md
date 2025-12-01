@@ -47,7 +47,7 @@ Unlike frameworks that rely on heavy runtime interpreters (like TFLite Micro), D
 │   └── utils.py               # Bit-packing math (Algorithm 1 & 3)
 │
 └── requirements.txt
-
+```
 
 ## 💻 Usage Guide
 
