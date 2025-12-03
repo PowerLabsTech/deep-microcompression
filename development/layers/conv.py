@@ -196,7 +196,7 @@ class Conv2d(Layer, nn.Conv2d):
         return keep_current_channel_index
 
 
-    def get_prune_channel_possible_hypermeters(self):
+    def get_prune_channel_possible_hyperparameters(self):
         """Returns valid channel counts for Search Phase."""
         if self.groups == self.out_channels:
             return None

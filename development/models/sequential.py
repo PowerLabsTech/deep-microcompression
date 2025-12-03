@@ -487,7 +487,7 @@ class Sequential(nn.Sequential):
                 elif isinstance(sparsity, dict):
                     for name, layer_sparsity in sparsity.items():
                         # Skip if layer cannot be pruned (
-                        if self[name].get_prune_channel_possible_hypermeters() is None:
+                        if self[name].get_prune_channel_possible_hyperparameters() is None:
                             continue
                         if not isinstance(layer_sparsity, (float, int)):
                             return False
@@ -496,7 +496,7 @@ class Sequential(nn.Sequential):
                             return False
                             # raise NameError(f"Found unknown layer name {name}")
                         if not isinstance(layer_sparsity, float) and \
-                            layer_sparsity not in self[name].get_prune_channel_possible_hypermeters():
+                            layer_sparsity not in self[name].get_prune_channel_possible_hyperparameters():
                             return False
                             # raise ValueError(f"Recieved a layer_sparsity of {layer_sparsity} ")
                     for name in self.names():
@@ -569,7 +569,7 @@ class Sequential(nn.Sequential):
         )
         return 
     
-    def get_prune_channel_possible_hypermeters(self) -> Dict:
+    def get_prune_channel_possible_hyperparameters(self) -> Dict:
         """
         Defines the valid search space for Structured Pruning.
 
@@ -585,7 +585,7 @@ class Sequential(nn.Sequential):
         prune_possible_hypermeters = dict()
 
         for name, layer in list(self.names_layers())[:-1]:
-            layer_prune_possible_hypermeters = layer.get_prune_channel_possible_hypermeters()
+            layer_prune_possible_hypermeters = layer.get_prune_channel_possible_hyperparameters()
             if layer_prune_possible_hypermeters is not None:
                 prune_possible_hypermeters[name] = layer_prune_possible_hypermeters
         return prune_possible_hypermeters
@@ -634,7 +634,7 @@ class Sequential(nn.Sequential):
 
         return get_all_combinations(flatten_dict({
             "prune_channel" : {
-                "sparsity" : self.get_prune_channel_possible_hypermeters(),
+                "sparsity" : self.get_prune_channel_possible_hyperparameters(),
                 "metric" : ["l2", "l1"],
             },
             "quantize" : self.get_quantize_possible_hyperparameters()
@@ -1026,7 +1026,7 @@ class Sequential(nn.Sequential):
             assert criterion_fun is not None
             assert optimizer_fun is not None
 
-        prune_channel_hp = self.get_prune_channel_possible_hypermeters()
+        prune_channel_hp = self.get_prune_channel_possible_hyperparameters()
         prune_channel_layers_sensity = {metric_name: dict() for metric_name in metrics.keys()}
 
         for layer_name, layer_prune_channel_hp in tqdm(prune_channel_hp.items()):
@@ -1115,7 +1115,7 @@ class Sequential(nn.Sequential):
             assert epochs is not None
             assert criterion_fun is not None
 
-        prune_channel_hp = self.get_prune_channel_possible_hypermeters()
+        prune_channel_hp = self.get_prune_channel_possible_hyperparameters()
         param = []
 
         for _ in range(num_data):

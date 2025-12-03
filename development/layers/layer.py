@@ -51,7 +51,7 @@ class Layer(ABC):
         pass
     
     @abstractmethod
-    def get_prune_channel_possible_hypermeters(self):
+    def get_prune_channel_possible_hyperparameters(self):
         """
         Returns the valid range of channels that can be kept (for Search/NAS).
         Used to generate the Sensitivity Analysis graphs.

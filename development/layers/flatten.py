@@ -79,7 +79,7 @@ class Flatten(Layer, nn.Flatten):
         return keep_current_channel_index.flatten()
     
 
-    def get_prune_channel_possible_hypermeters(self):
+    def get_prune_channel_possible_hyperparameters(self):
         return None
     
     def init_quantize(self, bitwidth, scheme, granularity, previous_output_quantize = None):

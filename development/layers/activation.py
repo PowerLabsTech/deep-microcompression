@@ -72,7 +72,7 @@ class ReLU(Layer, nn.ReLU):
         # Nothing to do
         return keep_prev_channel_index
 
-    def get_prune_channel_possible_hypermeters(self):
+    def get_prune_channel_possible_hyperparameters(self):
         return None
     
 
@@ -172,7 +172,7 @@ class ReLU6(Layer, nn.ReLU6):
         return keep_prev_channel_index
 
 
-    def get_prune_channel_possible_hypermeters(self):
+    def get_prune_channel_possible_hyperparameters(self):
         return None
     
     def init_quantize(self, bitwidth, scheme, granularity, previous_output_quantize = None):

@@ -156,7 +156,7 @@ class Linear(Layer, nn.Linear):
         return keep_current_channel_index
 
 
-    def get_prune_channel_possible_hypermeters(self):
+    def get_prune_channel_possible_hyperparameters(self):
         """
         Returns search space for Sensitivity Analysis.
         Allows testing every possible neuron count from 1 to N.

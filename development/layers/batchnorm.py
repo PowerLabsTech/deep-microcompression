@@ -82,7 +82,7 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
         return keep_prev_channel_index
     
 
-    def get_prune_channel_possible_hypermeters(self):
+    def get_prune_channel_possible_hyperparameters(self):
         return None
 
 
