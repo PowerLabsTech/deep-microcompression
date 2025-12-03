@@ -120,25 +120,44 @@ class Sequential(nn.Sequential):
         else:
             raise IndexError(f"Unknown index {idx}")
         
-    # def __add__(self, other) -> "Sequential":
+    def __add__(self, other) -> "Sequential":
 
-    #     result = Sequential()
-    #     print(other)
-    #     for layer in self:
-    #         result = result + layer
+        result = Sequential()
+        for name, layer in self.names_layers():
+            result.add_layer(name=name, layer=layer)        
         
-    #     if isinstance(other, Sequential):
-    #         for layer in other:
-    #             result = result + layer
-    #         return result
-    #     elif isinstance(other, Layer):
-    #         idx = result.class_idx.get(other.__class__.__name__, -1) + 1
-    #         result.class_idx[other.__class__.__name__] = idx
-    #         layer_type = other.__class__.__name__.lower()
-    #         result.add_module(f"{layer_type}_{idx}", other)
-    #         return result
-    #     raise RuntimeError(f"cannot add type{other} to Sequential")
+        if isinstance(other, Sequential):
+            for layer in other:
+                result.add_layer(layer=layer)        
+            return result
+        elif isinstance(other, Layer):
+            result.add_layer(other) 
 
+            return result
+        raise RuntimeError(f"cannot add type{other} to Sequential")
+    
+    def add_layer(self, layer: Union[Layer, nn.Module], name: str="") -> None:
+        """
+        Adds a layer and preserves the naming layer_idx, 
+        internally it uses the _modules container for to store the layers.
+        """
+        if (not name):
+            idx = self.class_idx.get(layer.__class__.__name__, -1) + 1
+            layer_type = layer.__class__.__name__.lower()
+            name = f"{layer_type}_{idx}"
+        else:
+            layer_type, idx = name.split("_")
+            try:
+                idx = int(idx)
+                old_idx = self.class_idx.get(layer.__class__.__name__, -1)
+                assert idx > old_idx, f"Adding layer {name} to self will over-write the another layer."
+            except ValueError:
+                # Do not update the class idx if idx is not an int
+                pass
+            
+        self.class_idx[layer.__class__.__name__] = idx
+        return super().add_module(name, layer) 
+        
 
     @property
     def is_compressed(self) -> bool:
