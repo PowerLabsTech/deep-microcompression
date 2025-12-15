@@ -71,5 +71,5 @@ The Arduino Uno has only 2048 bytes of SRAM.
 Loading Input Data...
 Running Inference...
 Inference Time: 145 ms
-Predictions: -12 8 -5 -8 -2 4 12 -4 -9 -1 
+Predictions: -3,  3, -2, -2, -1, -3, -2, -1, -2, -1
 ```
