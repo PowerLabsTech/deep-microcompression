@@ -294,9 +294,14 @@ class Linear(Layer, nn.Linear):
     
 
     @torch.no_grad()
-    def convert_to_c(self, var_name, input_shape):
+    def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """
         Generates C code for deployment (Stage 3).
+
+        Args:
+            var_name: Variable name to use in generated code
+            input_shape: Shape of the input tensor
+            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
         
         Produces one of three C constructor variants:
         1.  Float: Standard `float*` pointers (Baseline).
@@ -320,7 +325,8 @@ class Linear(Layer, nn.Linear):
         param_header, param_def = convert_tensor_to_bytes_var(
             weight, 
             f"{var_name}_weight", 
-            weight_bitwidth
+            weight_bitwidth,
+            for_arduino=for_arduino
         )   
         layer_header = param_header
         layer_param_def = param_def
@@ -333,7 +339,8 @@ class Linear(Layer, nn.Linear):
             param_header, param_def = convert_tensor_to_bytes_var(
                 bias, 
                 f"{var_name}_bias",
-                bias_bitwidth
+                bias_bitwidth,
+                for_arduino=for_arduino
             )
             layer_header += param_header
             layer_param_def += param_def

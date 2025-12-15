@@ -103,11 +103,13 @@ class ReLU(Layer, nn.ReLU):
     
     
     @torch.no_grad()
-    def convert_to_c(self, var_name, input_shape):
+    def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """Generates C code declarations for this layer
         
         Args:
             var_name: Variable name to use in generated code
+            input_shape: Shape of the input tensor
+            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
             
         Returns:
             Tuple of (header declaration, layer definition, parameter definition)
@@ -201,11 +203,13 @@ class ReLU6(Layer, nn.ReLU6):
     
     
     @torch.no_grad()
-    def convert_to_c(self, var_name, input_shape):
+    def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """Generates C code declarations for this layer
         
         Args:
             var_name: Variable name to use in generated code
+            input_shape: Shape of the input tensor
+            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
             
         Returns:
             Tuple of (header declaration, layer definition, parameter definition)

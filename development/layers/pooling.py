@@ -103,9 +103,14 @@ class MaxPool2d(Layer, nn.MaxPool2d):
     
 
     @torch.no_grad()
-    def convert_to_c(self, var_name, input_shape):
+    def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """
         Generates C code for bare-metal deployment.
+
+        Args:
+            var_name: Variable name to use in generated code
+            input_shape: Shape of the input tensor
+            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
         
         Exports structural parameters (Kernel, Stride, Padding) so the 
         generic C implementation can execute the loop.
@@ -202,12 +207,14 @@ class AvgPool2d(Layer, nn.AvgPool2d):
     
 
     @torch.no_grad()
-    def convert_to_c(self, var_name, input_shape):
+    def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """Generate C code declarations for this layer
         
         Args:
             var_name: Variable name to use in generated code
-            
+            input_shape: Shape of the input tensor
+            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
+
         Returns:
             Tuple of (header declaration, layer definition, parameter definition)
         """
