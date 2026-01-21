@@ -559,7 +559,7 @@ class Sequential(nn.Sequential):
                 sparsity[name], keep_prev_channel_index, input_shape,
                 is_output_layer=False, metric=metric
             )
-            _, input_shape = layer.get_output_tensor_shape(input_shape)
+            _, input_shape = layer.get_output_tensor_shape(torch.Size(input_shape))
 
 
         # Prune last layer
@@ -868,7 +868,7 @@ class Sequential(nn.Sequential):
         output_shape = input_shape
         # Track maximum tensor sizes at even/odd layers
         for i, layer in enumerate(self.layers()):
-            max_layer_shape, output_shape = layer.get_output_tensor_shape(input_shape)
+            max_layer_shape, output_shape = layer.get_output_tensor_shape(torch.Size(input_shape))
             # Calculate bytes required (applying packing factor)
             input_size = math.ceil(input_shape.numel() / size_division_because_quant)
             max_layer_size = math.ceil(max_layer_shape.numel() / size_division_because_quant)
@@ -907,6 +907,9 @@ class Sequential(nn.Sequential):
         Args:
             var_name: Base name for generated files
             dir: Output directory for generated files
+            input_shape: Shape of the model input tensor
+            test_input: Optional test input tensor to generate C array
+            for_arduino: If True, generates Arduino-compatible C code, add PROGMEM if needed to ensure the params are stored in flash memory.
         """
         """
         Generates the dependency-free C library for bare-metal deployment.
@@ -932,16 +935,16 @@ class Sequential(nn.Sequential):
         
         # Initialize file contents
         header_file = f"#ifndef {var_name.upper()}_H\n#define {var_name.upper()}_H\n\n"
-        header_file += "#include <stdint.h>\n#include \"deep_microcompression.h\"\n\n\n"
+        if not for_arduino:
+            header_file += "#include <stdint.h>\n#include \"deep_microcompression.h\"\n\n\n"
+        else:
+            header_file += "#include <stdint.h>\n#include <Arduino.h>\n#include \"deep_microcompression.h\"\n\n\n"
 
         definition_file = f"#include \"{var_name}.h\"\n\n"
         param_definition_file = f"#include \"{var_name}.h\"\n\n"
     
         # Calculate workspace requirements
         max_output_even_size, max_output_odd_size = self.get_max_workspace_arena(input_shape)
-
-        # Configure workspace based on quantization
-        # if getattr(self, "quantize_type", QUANTIZATION_NONE) != STATIC_QUANTIZATION_PER_TENSOR:
         
         scheme = None
         if self.is_quantized:
@@ -981,13 +984,13 @@ class Sequential(nn.Sequential):
 
             layers_def += f"    &{layer_name},\n"
 
-            layer_header, layer_def, layer_param_def = layer.convert_to_c(layer_name, input_shape)
+            layer_header, layer_def, layer_param_def = layer.convert_to_c(layer_name, input_shape, for_arduino=for_arduino)
             layers_header += layer_header
 
             param_definition_file += layer_param_def
             definition_file += layer_def 
 
-            _, input_shape = layer.get_output_tensor_shape(input_shape)  
+            _, input_shape = layer.get_output_tensor_shape(torch.Size(input_shape))  
         
         layers_def += "};\n"
         definition_file += layers_def
@@ -1007,7 +1010,12 @@ class Sequential(nn.Sequential):
                 bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
 
             if self.is_quantized and self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"] == QuantizationScheme.STATIC:
-                _, test_input_def = convert_tensor_to_bytes_var(self.input_quantize.apply(test_input), "test_input", self.input_quantize.bitwidth)
+                _, test_input_def = convert_tensor_to_bytes_var(
+                    self.input_quantize.apply(test_input), 
+                    "test_input", 
+                    self.input_quantize.bitwidth,
+                    for_arduino=for_arduino
+                )
                 # test_input_def = f"\nconst int8_t test_input[] = {{\n"
                 # for line in torch.split(self.input_quantize.apply(test_input).flatten(), 28):
                 #     test_input_def += "    " + ", ".join(
@@ -1016,7 +1024,11 @@ class Sequential(nn.Sequential):
                 # test_input_def += "};\n"
             else:
                     _, test_input_def = convert_tensor_to_bytes_var(test_input, "test_input",)
-                    test_input_def = f"\nconst float test_input[] = {{\n"
+                    if not for_arduino:
+                        test_input_def = f"\nconst float test_input[] = {{\n"
+                    else:
+                        test_input_def = f"#include <Arduino.h>\n\nconst float test_input[] PROGMEM= {{\n"
+
                     for line in torch.split(test_input.flatten(), 28):
                         test_input_def += "    " + ", ".join(
                             [f"{val:.4f}" for val in line]

@@ -79,8 +79,10 @@ class Prune_Channel:
             mask_prev_channel = torch.zeros_like(x)
 
             mask_prev_channel_index = [slice(None)]*x.ndim
+            # PyTorch 2.9 requires multidimensional indices to be tuples; convert to tuple
+            # to avoid deprecated non-tuple indexing and future incorrect tensor indexing.
             mask_prev_channel_index[1] = self.keep_prev_channel_index
-            mask_prev_channel[mask_prev_channel_index] = 1 
+            mask_prev_channel[tuple(mask_prev_channel_index)] = 1 
 
             #  Removing connections from this layer
             mask_current_channel = torch.zeros_like(x)
@@ -88,7 +90,7 @@ class Prune_Channel:
             mask_current_channel_index = [slice(None)]*x.ndim
             mask_current_channel_index[0] = self.keep_current_channel_index
 
-            mask_current_channel[mask_current_channel_index] = 1 
+            mask_current_channel[tuple(mask_current_channel_index)] = 1 
 
             # Combine masks (Intersection of valid inputs and valid outputs)
             mask = torch.mul(mask_current_channel, mask_prev_channel)

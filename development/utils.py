@@ -463,13 +463,15 @@ def pack_into_byte(byte_list, bitwidth):
 
 def convert_tensor_to_bytes_var(tensor: torch.Tensor, 
                                var_name: str, 
-                               bitwidth: Optional[int] = 8) -> tuple:
+                               bitwidth: Optional[int] = 8,
+                               for_arduino = False) -> tuple:
     """Convert tensor to C-style byte array declaration
     
     Args:
         tensor: Input tensor to convert
         var_name: Name to use for variable
         bitwidth: Bitwidth for quantization (if applicable)
+        for_arduino: If True, generates Arduino-compatible C code, add PROGMEM if needed to ensure the params are stored in flash memory.
         
     Returns:
         Tuple of (header string, definition string)
@@ -484,8 +486,15 @@ def convert_tensor_to_bytes_var(tensor: torch.Tensor,
         byte_convert = int8_to_bytes
         byte_per_line = INT8_BYTE_PER_LINE
 
-    var_header_str = f"extern const uint8_t {var_name}[];\n"
-    var_def_str = f"\nconst uint8_t {var_name}[] = {{\n"
+    if not for_arduino:
+        var_header_str = f"extern const uint8_t {var_name}[];\n"
+        var_def_str = f"\nconst uint8_t {var_name}[] = {{\n"
+    else:
+        # Fix to enforce that the weight are loaded in flash and not in RAM.
+        # By default Arduino loads all global variable on the RAM.
+        # https://docs.arduino.cc/language-reference/en/variables/utilities/PROGMEM/
+        var_header_str = f"extern const uint8_t {var_name}[] PROGMEM;\n"
+        var_def_str = f"\nconst uint8_t {var_name}[] PROGMEM = {{\n"
 
     if tensor.dtype != torch.int8 or bitwidth == 8:
         # Standard byte conversion for non-packed data

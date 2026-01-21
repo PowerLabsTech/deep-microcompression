@@ -20,9 +20,9 @@
  * @param stride Stride of pooling operation
  * @param Padding Padding size (currently unused, reserved for future)
  */
-MaxPool2d::MaxPool2d(uint32_t input_channel_size, uint32_t input_row_size, 
-                    uint32_t input_col_size, uint32_t kernel_size, 
-                    uint32_t stride, uint32_t padding) {
+MaxPool2d::MaxPool2d(uint16_t input_channel_size, uint16_t input_row_size, 
+                    uint16_t input_col_size, uint8_t kernel_size, 
+                    uint8_t stride, uint8_t padding) {
     // Store layer parameters
     this->input_channel_size = input_channel_size;
     this->input_row_size = input_row_size;
@@ -48,20 +48,21 @@ void MaxPool2d::forward(float* input, float* output) {
     float temp, input_val;
 
     // Loop over all channels
-    for (uint32_t n = 0; n < this->input_channel_size; n++) {
+    for (uint16_t n = 0; n < this->input_channel_size; n++) {
         // Loop over output spatial dimensions
-        for (uint32_t m = 0; m < this->output_row_size; m++) {
-            for (uint32_t l = 0; l < this->output_col_size; l++) {
+        for (uint16_t m = 0; m < this->output_row_size; m++) {
+            for (uint16_t l = 0; l < this->output_col_size; l++) {
                 // Initialize max value to smallest possible float
                 temp = -FLT_MAX;
 
                 // Iterate through pooling window
-                for (uint32_t j = 0; j < this->kernel_size; j++) {
-                    for (uint32_t i = 0; i < this->kernel_size; i++) {
+                for (uint8_t j = 0; j < this->kernel_size; j++) {
+                    for (uint8_t i = 0; i < this->kernel_size; i++) {
                         // Calculate input index
-                        input_val = input[(n * this->input_row_size * this->input_col_size) +
-                                          ((m * this->stride + j) * this->input_col_size) +
-                                          (l * this->stride + i)];
+                        input_val = act_read_float(input, 
+                            (n * this->input_row_size * this->input_col_size) +
+                            ((m * this->stride + j) * this->input_col_size) +
+                            (l * this->stride + i));
                         // Update max value
                         if (input_val > temp) {
                             temp = input_val;
@@ -70,8 +71,11 @@ void MaxPool2d::forward(float* input, float* output) {
                 }
 
                 // Store max value in output
-                output[(n * this->output_row_size * this->output_col_size) +
-                        (m * this->output_col_size) + l] = temp;
+                act_write_float(output, 
+                    (n * this->output_row_size * this->output_col_size) +
+                    (m * this->output_col_size) + l,
+                    temp
+                    );
             }
         }
     }
@@ -79,9 +83,9 @@ void MaxPool2d::forward(float* input, float* output) {
 
 
 
-AvgPool2d::AvgPool2d(uint32_t input_channel_size, uint32_t input_row_size, 
-                    uint32_t input_col_size, uint32_t kernel_size, 
-                    uint32_t stride, uint32_t padding) {
+AvgPool2d::AvgPool2d(uint16_t input_channel_size, uint16_t input_row_size, 
+                    uint16_t input_col_size, uint8_t kernel_size, 
+                    uint8_t stride, uint8_t padding) {
     // Store layer parameters
     this->input_channel_size = input_channel_size;
     this->input_row_size = input_row_size;
@@ -101,24 +105,29 @@ void AvgPool2d::forward(float* input, float* output) {
 
 
     // Loop over all channels
-    for (uint32_t n = 0; n < this->input_channel_size; n++) {
+    for (uint16_t n = 0; n < this->input_channel_size; n++) {
         // Loop over output spatial dimensions
-        for (uint32_t m = 0; m < this->output_row_size; m++) {
-            for (uint32_t l = 0; l < this->output_col_size; l++) {
+        for (uint16_t m = 0; m < this->output_row_size; m++) {
+            for (uint16_t l = 0; l < this->output_col_size; l++) {
                 // Initialize max value to smallest possible float
                 total = 0;
 
                 // Iterate through pooling window
-                for (uint32_t j = 0; j < this->kernel_size; j++) {
-                    for (uint32_t i = 0; i < this->kernel_size; i++) {
+                for (uint8_t j = 0; j < this->kernel_size; j++) {
+                    for (uint8_t i = 0; i < this->kernel_size; i++) {
                         // Calculate input index
-                        total += input[(n * this->input_row_size * this->input_col_size) +
-                                          ((m * this->stride + j) * this->input_col_size) +
-                                          (l * this->stride + i)];
+                        total += act_read_float(input, 
+                            (n * this->input_row_size * this->input_col_size) +
+                            ((m * this->stride + j) * this->input_col_size) +
+                            (l * this->stride + i)
+                        );
                     }
                 }
-                output[(n * this->output_row_size * this->output_col_size) +
-                                     (m * this->output_col_size) + l] = total / pool_size;
+                act_write_float(output,
+                    (n * this->output_row_size * this->output_col_size) +
+                    (m * this->output_col_size) + l,
+                    total / pool_size
+                );
             }
         }
     }
@@ -127,9 +136,9 @@ void AvgPool2d::forward(float* input, float* output) {
 
 #else // QUANTIZATION_SCHEME
 
-MaxPool2d::MaxPool2d(uint32_t input_channel_size, uint32_t input_row_size,
-                    uint32_t input_col_size, uint32_t kernel_size,
-                    uint32_t stride, uint32_t padding) {
+MaxPool2d::MaxPool2d(uint16_t input_channel_size, uint16_t input_row_size,
+                    uint16_t input_col_size, uint8_t kernel_size,
+                    uint8_t stride, uint8_t padding) {
     // Store layer parameters
     this->input_channel_size = input_channel_size;
     this->input_row_size = input_row_size;
@@ -147,19 +156,20 @@ void MaxPool2d::forward(int8_t* input, int8_t* output) {
     int8_t temp, input_val;
 
     // Loop over all channels
-    for (uint32_t n = 0; n < this->input_channel_size; n++) {
+    for (uint16_t n = 0; n < this->input_channel_size; n++) {
         // Loop over output spatial dimensions
-        for (uint32_t m = 0; m < this->output_row_size; m++) {
-            for (uint32_t l = 0; l < this->output_col_size; l++) {
+        for (uint16_t m = 0; m < this->output_row_size; m++) {
+            for (uint16_t l = 0; l < this->output_col_size; l++) {
                 // Initialize max value to smallest possible int8
                 temp = -128;
 
                 // Iterate through pooling window
-                for (uint32_t j = 0; j < this->kernel_size; j++) {
-                    for (uint32_t i = 0; i < this->kernel_size; i++) {
+                for (uint8_t j = 0; j < this->kernel_size; j++) {
+                    for (uint8_t i = 0; i < this->kernel_size; i++) {
                         // Calculate input index
 
-                        input_val = get_packed_value(input, 
+                        input_val = act_read_packed_intb(
+                            input,
                             (n * this->input_row_size * this->input_col_size) +
                             ((m * this->stride + j) * this->input_col_size) +
                             (l * this->stride + i)
@@ -173,7 +183,8 @@ void MaxPool2d::forward(int8_t* input, int8_t* output) {
                 }
 
                 // Store max value in output
-                set_packed_value(output, 
+                act_write_packed_intb(
+                    output, 
                     (n * this->output_row_size * this->output_col_size) +
                     (m * this->output_col_size) + l,
                     temp
@@ -185,9 +196,9 @@ void MaxPool2d::forward(int8_t* input, int8_t* output) {
 
 
 
-AvgPool2d::AvgPool2d(uint32_t input_channel_size, uint32_t input_row_size,
-                    uint32_t input_col_size, uint32_t kernel_size,
-                    uint32_t stride, uint32_t padding) {
+AvgPool2d::AvgPool2d(uint16_t input_channel_size, uint16_t input_row_size,
+                    uint16_t input_col_size, uint8_t kernel_size,
+                    uint8_t stride, uint8_t padding) {
     // Store layer parameters
     this->input_channel_size = input_channel_size;
     this->input_row_size = input_row_size;
@@ -207,32 +218,32 @@ void AvgPool2d::forward(int8_t* input, int8_t* output) {
     uint8_t pool_size = this->kernel_size * this->kernel_size;
 
     // Loop over all channels
-    for (uint32_t n = 0; n < this->input_channel_size; n++) {
+    for (uint16_t n = 0; n < this->input_channel_size; n++) {
         // Loop over output spatial dimensions
-        for (uint32_t m = 0; m < this->output_row_size; m++) {
-            for (uint32_t l = 0; l < this->output_col_size; l++) {
+        for (uint16_t m = 0; m < this->output_row_size; m++) {
+            for (uint16_t l = 0; l < this->output_col_size; l++) {
                 // Initialize max value to smallest possible int8
                 total = 0;
 
                 // Iterate through pooling window
-                for (uint32_t j = 0; j < this->kernel_size; j++) {
-                    for (uint32_t i = 0; i < this->kernel_size; i++) {
-                        // Calculate input index
-                        total += get_packed_value(input,
+                for (uint8_t j = 0; j < this->kernel_size; j++) {
+                    for (uint8_t i = 0; i < this->kernel_size; i++) {
+                        total += act_read_packed_intb(
+                            input, 
                             (n * this->input_row_size * this->input_col_size) +
                             ((m * this->stride + j) * this->input_col_size) +
                             (l * this->stride + i)
                         );
-
                     }
                 }
 
-                // Store max value in output
-                set_packed_value(output, 
+                // Store average value in output
+                act_write_packed_intb(
+                    output, 
                     (n * this->output_row_size * this->output_col_size) +
                     (m * this->output_col_size) + l,
                     (int8_t)((float)total / pool_size)
-                );              
+                );
             }
         }
     }

@@ -109,9 +109,15 @@ class Layer(ABC):
         pass
 
     @abstractmethod
-    def convert_to_c(self, var_name):
+    def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """
         Deployment Generation.
+
+        Args:
+
+            var_name: Variable name to use in generated code
+            input_shape: Shape of the input tensor
+            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
         
         Must implement:
         1. Bit-Packing for weights.

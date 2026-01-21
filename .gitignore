@@ -1,3 +1,155 @@
+# lib/*
+# lib/
+###############################################
+# General OS files
+###############################################
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+###############################################
+# Python
+###############################################
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env/
+.venv/
+env/
+venv/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+pytest_cache/
+coverage.xml
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+###############################################
+# C++ / CMake
+###############################################
+
+# Build directories
+build/
+build-*/
+cmake-build-*/
+
+# CMake cache & generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+
+# Compiled object files
+*.o
+*.obj
+*.lo
+*.slo
+
+# Compiled static & dynamic libraries
+*.a
+*.la
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+*.app
+*.run
+
+###############################################
+# IDE / Editor
+###############################################
+
+# VSCode
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# CLion / JetBrains
+.idea/
+
+# Visual Studio
+*.user
+*.vcxproj.user
+*.sln
+*.suo
+
+# Sublime
+*.sublime-workspace
+*.sublime-project
+
+# Vim
+*.swp
+*.swo
+
+###############################################
+# Logs / Temp
+###############################################
+*.log
+*.tmp
+*.temp
+*.bak
+
+###############################################
+# Other
+###############################################
+# Ignore local config
+local_settings.py
+.envrc
+
+# Any venv-style directory
+*venv*/
+*env*/
+
+Datasets/
+
+
 *__pycache__
 *.pyc
 
@@ -24,6 +176,3 @@ build
 
 deep_microcompression/
 
-
-# lib/*
-# lib/

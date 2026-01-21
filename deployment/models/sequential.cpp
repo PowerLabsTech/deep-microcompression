@@ -23,7 +23,7 @@
  * @note Uses ping-pong strategy to alternate between workspace_even_layer
  *       and workspace_odd_layer for memory efficiency
  */
-Sequential::Sequential(Layer **layers, uint32_t layers_len, float *workspace, 
+Sequential::Sequential(Layer **layers, uint8_t layers_len, float *workspace, 
                       uint32_t workspace_even_layer_size) {
     this->layers = layers;
     this->layers_len = layers_len;
@@ -44,7 +44,7 @@ Sequential::Sequential(Layer **layers, uint32_t layers_len, float *workspace,
  * - Odd layers write to even workspace
  */
 void Sequential::predict(void) {
-    for (int i = 0; i < this->layers_len; i++) {
+    for (uint8_t i = 0; i < this->layers_len; i++) {
         switch (i % 2) {
             case DLAI_EVEN:
                 this->layers[i]->forward(this->workspace_even_layer, 
@@ -61,7 +61,7 @@ void Sequential::predict(void) {
 
 #else // QUATIZATION_SCHEME
 
-Sequential::Sequential(Layer **layers, uint32_t layers_len, int8_t *workspace, 
+Sequential::Sequential(Layer **layers, uint8_t layers_len, int8_t *workspace, 
                       uint32_t workspace_even_layer_size) {
     this->layers = layers;
     this->layers_len = layers_len;
@@ -75,7 +75,7 @@ Sequential::Sequential(Layer **layers, uint32_t layers_len, int8_t *workspace,
 }
 
 void Sequential::predict(void) {
-    for (int i = 0; i < this->layers_len; i++) {
+    for (uint8_t i = 0; i < this->layers_len; i++) {
         switch (i % 2) {
             case DLAI_EVEN:
                 this->layers[i]->forward(this->workspace_even_layer, 

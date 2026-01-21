@@ -21,8 +21,8 @@
  */
 class Linear : public Layer {
 protected:
-    uint32_t input_size;      ///< Number of input features
-    uint32_t output_size;     ///< Number of output neurons
+    uint16_t input_size;      ///< Number of input features
+    uint16_t output_size;     ///< Number of output neurons
     const float* weight;      ///< Weight matrix (row-major, shape [output_size, input_size])
     const float* bias;        ///< Bias vector (size: output_size)
 
@@ -34,7 +34,7 @@ public:
      * @param weight Pointer to weight matrix
      * @param bias Pointer to bias vector
      */
-    Linear(uint32_t output_size, uint32_t input_size, 
+    Linear(uint16_t output_size, uint16_t input_size, 
           const float* weight, const float* bias);
 
     /**
@@ -55,8 +55,8 @@ public:
  */
 class Linear : public Layer {
 protected:
-    uint32_t input_size;      ///< Number of input features
-    uint32_t output_size;     ///< Number of output neurons
+    uint16_t input_size;      ///< Number of input features
+    uint16_t output_size;     ///< Number of output neurons
     const int8_t* weight;     ///< Quantized weight matrix
     const float* bias;        ///< Floating-point bias vector (size: output_size)
     float weight_scale;       ///< Scaling factor for weights
@@ -70,7 +70,7 @@ public:
      * @param weight_scale Scaling factor for weights
      * @param bias Pointer to bias vector
      */
-    Linear(uint32_t output_size, uint32_t input_size,
+    Linear(uint16_t output_size, uint16_t input_size,
           const int8_t* weight, const float* bias,
           float weight_scale);
 
@@ -87,8 +87,8 @@ public:
 
 class Linear : public Layer {
 protected:
-    uint32_t input_size;      ///< Number of input features
-    uint32_t output_size;     ///< Number of output neurons
+    uint16_t input_size;      ///< Number of input features
+    uint16_t output_size;     ///< Number of output neurons
     float output_scale;       ///< Output tensor scaling factor
     int8_t output_zero_point; ///< Output tensor zero point
     int8_t input_zero_point;  ///< Input tensor zero point
@@ -97,7 +97,7 @@ protected:
     float bias_scale;         ///< Bias scaling factor
 
 public:
-    Linear(uint32_t output_size, uint32_t input_size, const int8_t* weight, const int32_t* bias,
+    Linear(uint16_t output_size, uint16_t input_size, const int8_t* weight, const int32_t* bias,
           float output_scale, int8_t output_zero_point, int8_t input_zero_point,  float bias_scale);
 
     void forward(int8_t* input, int8_t* output) override;

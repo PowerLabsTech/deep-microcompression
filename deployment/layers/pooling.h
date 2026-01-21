@@ -20,16 +20,16 @@
  */
 class MaxPool2d : public Layer {
 private:
-    uint32_t input_channel_size;  ///< Number of input channels
-    uint32_t input_row_size;      ///< Height of input feature map
-    uint32_t input_col_size;      ///< Width of input feature map
+    uint16_t input_channel_size;  ///< Number of input channels
+    uint16_t input_row_size;      ///< Height of input feature map
+    uint16_t input_col_size;      ///< Width of input feature map
 
-    uint32_t output_row_size;     ///< Height of output feature map
-    uint32_t output_col_size;     ///< Width of output feature map
+    uint16_t output_row_size;     ///< Height of output feature map
+    uint16_t output_col_size;     ///< Width of output feature map
 
-    uint32_t kernel_size;         ///< Size of pooling window (square)
-    uint32_t stride;              ///< Stride for pooling operation
-    uint32_t padding;             ///< Padding size around input
+    uint8_t kernel_size;         ///< Size of pooling window (square)
+    uint8_t stride;              ///< Stride for pooling operation
+    uint8_t padding;             ///< Padding size around input
 
 public:
     /**
@@ -42,12 +42,12 @@ public:
      * @param stride Stride for pooling operation
      * @param padding Padding size around input
      */
-    MaxPool2d(uint32_t input_channel_size, 
-              uint32_t input_row_size, 
-              uint32_t input_col_size,
-              uint32_t kernel_size, 
-              uint32_t stride, 
-              uint32_t padding);
+    MaxPool2d(uint16_t input_channel_size, 
+              uint16_t input_row_size, 
+              uint16_t input_col_size,
+              uint8_t kernel_size, 
+              uint8_t stride, 
+              uint8_t padding);
 
     /**
      * @brief Forward pass for floating-point max pooling.
@@ -63,16 +63,16 @@ public:
 
 class AvgPool2d : public Layer {
 private:
-    uint32_t input_channel_size;  ///< Number of input channels
-    uint32_t input_row_size;      ///< Height of input feature map
-    uint32_t input_col_size;      ///< Width of input feature map
+    uint16_t input_channel_size;  ///< Number of input channels
+    uint16_t input_row_size;      ///< Height of input feature map
+    uint16_t input_col_size;      ///< Width of input feature map
 
-    uint32_t output_row_size;     ///< Height of output feature map
-    uint32_t output_col_size;     ///< Width of output feature map
+    uint16_t output_row_size;     ///< Height of output feature map
+    uint16_t output_col_size;     ///< Width of output feature map
 
-    uint32_t kernel_size;         ///< Size of pooling window (square)
-    uint32_t stride;              ///< Stride for pooling operation
-    uint32_t padding;             ///< Padding size around input
+    uint8_t kernel_size;         ///< Size of pooling window (square)
+    uint8_t stride;              ///< Stride for pooling operation
+    uint8_t padding;             ///< Padding size around input
 
 public:
     /**
@@ -85,12 +85,12 @@ public:
      * @param stride Stride for pooling operation
      * @param padding Padding size around input
      */
-    AvgPool2d(uint32_t input_channel_size, 
-              uint32_t input_row_size, 
-              uint32_t input_col_size,
-              uint32_t kernel_size, 
-              uint32_t stride, 
-              uint32_t padding);
+    AvgPool2d(uint16_t input_channel_size, 
+              uint16_t input_row_size, 
+              uint16_t input_col_size,
+              uint8_t kernel_size, 
+              uint8_t stride, 
+              uint8_t padding);
 
     /**
      * @brief Forward pass for floating-point max pooling.
@@ -108,16 +108,16 @@ public:
 
 class MaxPool2d : public Layer {
 private:
-    uint32_t input_channel_size;  ///< Number of input channels
-    uint32_t input_row_size;      ///< Height of input feature map
-    uint32_t input_col_size;      ///< Width of input feature map
+    uint16_t input_channel_size;  ///< Number of input channels
+    uint16_t input_row_size;      ///< Height of input feature map
+    uint16_t input_col_size;      ///< Width of input feature map
 
-    uint32_t output_row_size;     ///< Height of output feature map
-    uint32_t output_col_size;     ///< Width of output feature map
+    uint16_t output_row_size;     ///< Height of output feature map
+    uint16_t output_col_size;     ///< Width of output feature map
 
-    uint32_t kernel_size;         ///< Size of pooling window (square)
-    uint32_t stride;              ///< Stride for pooling operation
-    uint32_t padding;             ///< Padding size around input
+    uint8_t kernel_size;         ///< Size of pooling window (square)
+    uint8_t stride;              ///< Stride for pooling operation
+    uint8_t padding;             ///< Padding size around input
 
 public:
     /**
@@ -130,12 +130,12 @@ public:
      * @param stride Stride for pooling operation
      * @param padding Padding size around input
      */
-    MaxPool2d(uint32_t input_channel_size, 
-              uint32_t input_row_size, 
-              uint32_t input_col_size,
-              uint32_t kernel_size, 
-              uint32_t stride, 
-              uint32_t padding);
+    MaxPool2d(uint16_t input_channel_size, 
+              uint16_t input_row_size, 
+              uint16_t input_col_size,
+              uint8_t kernel_size, 
+              uint8_t stride, 
+              uint8_t padding);
 
     /**
      * @brief Forward pass for quantized max pooling.
@@ -151,16 +151,16 @@ public:
 
 class AvgPool2d : public Layer {
 private:
-    uint32_t input_channel_size;  ///< Number of input channels
-    uint32_t input_row_size;      ///< Height of input feature map
-    uint32_t input_col_size;      ///< Width of input feature map
+    uint16_t input_channel_size;  ///< Number of input channels
+    uint16_t input_row_size;      ///< Height of input feature map
+    uint16_t input_col_size;      ///< Width of input feature map
 
-    uint32_t output_row_size;     ///< Height of output feature map
-    uint32_t output_col_size;     ///< Width of output feature map
+    uint16_t output_row_size;     ///< Height of output feature map
+    uint16_t output_col_size;     ///< Width of output feature map
 
-    uint32_t kernel_size;         ///< Size of pooling window (square)
-    uint32_t stride;              ///< Stride for pooling operation
-    uint32_t padding;             ///< Padding size around input
+    uint8_t kernel_size;         ///< Size of pooling window (square)
+    uint8_t stride;              ///< Stride for pooling operation
+    uint8_t padding;             ///< Padding size around input
 
 public:
     /**
@@ -173,12 +173,12 @@ public:
      * @param stride Stride for pooling operation
      * @param padding Padding size around input
      */
-    AvgPool2d(uint32_t input_channel_size, 
-              uint32_t input_row_size, 
-              uint32_t input_col_size,
-              uint32_t kernel_size, 
-              uint32_t stride, 
-              uint32_t padding);
+    AvgPool2d(uint16_t input_channel_size, 
+              uint16_t input_row_size, 
+              uint16_t input_col_size,
+              uint8_t kernel_size, 
+              uint8_t stride, 
+              uint8_t padding);
 
     /**
      * @brief Forward pass for quantized max pooling.

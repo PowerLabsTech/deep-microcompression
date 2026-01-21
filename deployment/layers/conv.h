@@ -31,24 +31,24 @@
 class Conv2d : public Layer {
 protected:
     // Input tensor dimensions
-    uint32_t input_channel_size;  ///< Number of input channels
-    uint32_t input_row_size;      ///< Height of input feature map
-    uint32_t input_col_size;      ///< Width of input feature map
+    uint8_t input_channel_size;  ///< Number of input channels
+    uint16_t input_row_size;      ///< Height of input feature map
+    uint16_t input_col_size;      ///< Width of input feature map
 
     // Output tensor dimensions
-    uint32_t output_channel_size; ///< Number of output channels
-    uint32_t output_row_size;     ///< Height of output feature map
-    uint32_t output_col_size;     ///< Width of output feature map
+    uint8_t output_channel_size; ///< Number of output channels
+    uint16_t output_row_size;     ///< Height of output feature map
+    uint16_t output_col_size;     ///< Width of output feature map
 
     // Kernel parameters
-    uint32_t kernel_row_size;     ///< Height of convolution kernel
-    uint32_t kernel_col_size;     ///< Width of convolution kernel
+    uint8_t kernel_row_size;     ///< Height of convolution kernel
+    uint8_t kernel_col_size;     ///< Width of convolution kernel
 
     // Operation parameters
-    uint32_t stride_row;         ///< Vertical stride
-    uint32_t stride_col;         ///< Horizontal stride
+    uint8_t stride_row;         ///< Vertical stride
+    uint8_t stride_col;         ///< Horizontal stride
     Padding_t  padding;            ///< Padding type (0=VALID, 1=SAME)
-    uint32_t groups;
+    uint8_t groups;
 
     // Weight and bias tensors
     const float* weight;         ///< Pointer to weight tensor
@@ -69,9 +69,9 @@ public:
      * @param weight Pointer to weight tensor
      * @param bias Pointer to bias tensor
      */
-    Conv2d(uint32_t input_channel_size, uint32_t input_row_size, uint32_t input_col_size,
-           uint32_t output_channel_size, uint32_t kernel_row_size, uint32_t kernel_col_size,
-           uint32_t stride_row, uint32_t stride_col, Padding_t padding, uint32_t groups,
+    Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
+           uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
+           uint8_t stride_row, uint8_t stride_col, Padding_t padding, uint8_t groups,
            const float* weight, const float* bias);
     
     /**
@@ -93,24 +93,24 @@ public:
 class Conv2d : public Layer {
 protected:
     // Input tensor dimensions
-    uint32_t input_channel_size;  ///< Number of input channels
-    uint32_t input_row_size;      ///< Height of input feature map
-    uint32_t input_col_size;      ///< Width of input feature map
+    uint16_t input_channel_size;  ///< Number of input channels
+    uint16_t input_row_size;      ///< Height of input feature map
+    uint16_t input_col_size;      ///< Width of input feature map
 
     // Output tensor dimensions
-    uint32_t output_channel_size; ///< Number of output channels
-    uint32_t output_row_size;     ///< Height of output feature map
-    uint32_t output_col_size;     ///< Width of output feature map
+    uint16_t output_channel_size; ///< Number of output channels
+    uint16_t output_row_size;     ///< Height of output feature map
+    uint16_t output_col_size;     ///< Width of output feature map
 
     // Kernel parameters
-    uint32_t kernel_row_size;     ///< Height of convolution kernel
-    uint32_t kernel_col_size;     ///< Width of convolution kernel
+    uint8_t kernel_row_size;     ///< Height of convolution kernel
+    uint8_t kernel_col_size;     ///< Width of convolution kernel
 
     // Operation parameters
-    uint32_t stride_row;         ///< Vertical stride
-    uint32_t stride_col;         ///< Horizontal stride
+    uint8_t stride_row;         ///< Vertical stride
+    uint8_t stride_col;         ///< Horizontal stride
     Padding_t padding;            ///< Padding type (0=VALID, 1=SAME)
-    uint32_t groups;
+    uint8_t groups;
 
     // Quantization parameters
     const int8_t* weight;       ///< Pointer to quantized weight tensor
@@ -123,9 +123,9 @@ public:
      * @param weight_scale Scale factor for quantized weights
      * @param other parameters same as floating-point version
      */
-    Conv2d(uint32_t input_channel_size, uint32_t input_row_size, uint32_t input_col_size,
-           uint32_t output_channel_size, uint32_t kernel_row_size, uint32_t kernel_col_size,
-           uint32_t stride_row, uint32_t stride_col, Padding_t padding, uint32_t groups,
+    Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
+           uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
+           uint8_t stride_row, uint8_t stride_col, Padding_t padding, uint8_t groups,
            const int8_t* weight, const float* bias, float weight_scale);
 
     /**
@@ -142,24 +142,24 @@ public:
 class Conv2d : public Layer {
 protected:
     // Input tensor dimensions
-    uint32_t input_channel_size;  ///< Number of input channels
-    uint32_t input_row_size;      ///< Height of input feature map
-    uint32_t input_col_size;      ///< Width of input feature map
+    uint16_t input_channel_size;  ///< Number of input channels
+    uint16_t input_row_size;      ///< Height of input feature map
+    uint16_t input_col_size;      ///< Width of input feature map
 
     // Output tensor dimensions
-    uint32_t output_channel_size; ///< Number of output channels
-    uint32_t output_row_size;     ///< Height of output feature map
-    uint32_t output_col_size;     ///< Width of output feature map
+    uint16_t output_channel_size; ///< Number of output channels
+    uint16_t output_row_size;     ///< Height of output feature map
+    uint16_t output_col_size;     ///< Width of output feature map
 
     // Kernel parameters
-    uint32_t kernel_row_size;     ///< Height of convolution kernel
-    uint32_t kernel_col_size;     ///< Width of convolution kernel
+    uint8_t kernel_row_size;     ///< Height of convolution kernel
+    uint8_t kernel_col_size;     ///< Width of convolution kernel
 
     // Operation parameters
-    uint32_t stride_row;         ///< Vertical stride
-    uint32_t stride_col;         ///< Horizontal stride
+    uint8_t stride_row;         ///< Vertical stride
+    uint8_t stride_col;         ///< Horizontal stride
     Padding_t padding;            ///< Padding type (0=VALID, 1=SAME)
-    uint32_t groups;
+    uint8_t groups;
 
     // Weight and bias tensors
     const int8_t* weight;       ///< Pointer to quantized weight tensor
@@ -173,9 +173,9 @@ protected:
     float bias_scale;           ///< Bias scale factor
 
 public:
-    Conv2d(uint32_t input_channel_size, uint32_t input_row_size, uint32_t input_col_size,
-           uint32_t output_channel_size, uint32_t kernel_row_size, uint32_t kernel_col_size,
-           uint32_t stride_row, uint32_t stride_col, Padding_t padding, uint32_t groups,
+    Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
+           uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
+           uint8_t stride_row, uint8_t stride_col, Padding_t padding, uint8_t groups,
            const int8_t* weight, const int32_t* bias, float output_scale, 
            int8_t output_zero_point, int8_t input_zero_point,  float bias_scale);
 

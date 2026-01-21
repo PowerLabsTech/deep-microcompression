@@ -238,7 +238,7 @@ class Conv2d(Layer, nn.Conv2d):
             setattr(self, "output_quantize", Quantize(
                 self, bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC
             ))
-
+ 
         # Bias Quantizer
         if self.bias is not None:
             if not self.is_pruned_channel:
@@ -345,9 +345,14 @@ class Conv2d(Layer, nn.Conv2d):
     
 
     @torch.no_grad()
-    def convert_to_c(self, var_name, input_shape):
+    def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """
         Generates C code for deployment.
+
+        Args:
+            var_name: Variable name to use in generated code
+            input_shape: Shape of the input tensor
+            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
         
         Key DMC Features:
         - Bit-Packing: Calls `convert_tensor_to_bytes_var` which packs 
@@ -378,7 +383,8 @@ class Conv2d(Layer, nn.Conv2d):
         param_header, param_def = convert_tensor_to_bytes_var(
             weight, 
             f"{var_name}_weight", 
-            weight_bitwidth
+            weight_bitwidth,
+            for_arduino=for_arduino
         )   
         layer_header = param_header
         layer_param_def = param_def
@@ -390,7 +396,8 @@ class Conv2d(Layer, nn.Conv2d):
             param_header, param_def = convert_tensor_to_bytes_var(
                 bias, 
                 f"{var_name}_bias",
-                bias_bitwidth
+                bias_bitwidth,
+                for_arduino=for_arduino
             )
             layer_header += param_header
             layer_param_def += param_def

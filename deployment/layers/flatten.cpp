@@ -31,8 +31,7 @@ Flatten::Flatten(uint32_t input_size) {
 void Flatten::forward(float* input, float* output) {
     // Perform element-wise copy (no transformation needed)
     for (uint32_t i = 0; i < this->input_size; i++) {
-        output[i] = input[i];
-        // set_value(output, i, get_value(input, i));
+        act_write_float(output, i, act_read_float(input, i));
     }
 }
 
@@ -47,8 +46,7 @@ Flatten::Flatten(uint32_t input_size) {
 void Flatten::forward(int8_t* input, int8_t* output) {
     // Perform element-wise copy (no transformation needed)
     for (uint32_t i = 0; i < this->input_size; i++) {
-        // output[i] = input[i];
-        set_packed_value(output, i, get_packed_value(input, i));
+        act_write_packed_intb(output, i, act_read_packed_intb(input, i));
     }
 }
 

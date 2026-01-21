@@ -133,9 +133,14 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
 
     
     @torch.no_grad()
-    def convert_to_c(self, var_name, input_shape):
+    def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """
         Generates C code for a standalone BatchNorm layer.
+
+        Args:
+            var_name: Variable name to use in generated code
+            input_shape: Shape of the input tensor
+            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if
 
         WARNING: This generates Floating Point code (`float*`).
         This is provided for baseline comparison/debugging. For the actual 
@@ -148,11 +153,11 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
 
         input_channel_size = folded_weight.size(0)
 
-        param_header, param_def = convert_tensor_to_bytes_var(folded_weight, f"{var_name}_folded_weight")
+        param_header, param_def = convert_tensor_to_bytes_var(folded_weight, f"{var_name}_folded_weight", for_arduino=for_arduino)
         layer_header = param_header
         layer_param_def = param_def
 
-        param_header, param_def = convert_tensor_to_bytes_var(folded_bias, f"{var_name}_folded_bias")
+        param_header, param_def = convert_tensor_to_bytes_var(folded_bias, f"{var_name}_folded_bias", for_arduino=for_arduino)
         layer_header += param_header
         layer_param_def += param_def
 

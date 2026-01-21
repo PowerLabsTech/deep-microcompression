@@ -34,7 +34,7 @@
 class Sequential {
 private:
     Layer** layers;                  ///< Array of layer pointers
-    uint32_t layers_len;             ///< Number of layers in the model
+    uint8_t layers_len;             ///< Number of layers in the model
     
     float* workspace_even_layer;     ///< Workspace buffer for even layers
     float* workspace_odd_layer;      ///< Workspace buffer for odd layers
@@ -50,7 +50,7 @@ public:
      * @param workspace Pre-allocated workspace memory
      * @param workspace_even_layer_size Size of even layer partition
      */
-    Sequential(Layer** layers, uint32_t layers_len, 
+    Sequential(Layer** layers, uint8_t layers_len, 
               float* workspace, uint32_t workspace_even_layer_size);
 
     /**
@@ -69,7 +69,7 @@ public:
 class Sequential {
 private:
     Layer** layers;                  ///< Array of layer pointers
-    uint32_t layers_len;             ///< Number of layers in the model
+    uint8_t layers_len;             ///< Number of layers in the model
     
     int8_t* workspace_even_layer;    ///< Workspace buffer for even layers
     int8_t* workspace_odd_layer;     ///< Workspace buffer for odd layers
@@ -85,7 +85,7 @@ public:
      * @param workspace Pre-allocated workspace memory
      * @param workspace_even_layer_size Size of even layer partition
      */
-    Sequential(Layer** layers, uint32_t layers_len,
+    Sequential(Layer** layers, uint8_t layers_len,
               int8_t* workspace, uint32_t workspace_even_layer_size);
 
     /**
