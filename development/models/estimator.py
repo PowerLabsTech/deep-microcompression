@@ -7,13 +7,17 @@ the relationship between compression parameters (e.g., sparsity configurations)
 and model performance. It serves as a surrogate model to speed up the search 
 process for optimal compression ratios.
 """
-from typing import Dict, Iterable, List, Any
+from typing import Dict, Iterable, List, Any, Union
+
+import torch
+import numpy as np
+
 
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from .sequential import Sequential, Linear, ReLU
+from .sequential import Sequential
 
 class Estimator:
     """
@@ -26,10 +30,11 @@ class Estimator:
     
     def __init__(
         self, 
-        data: torch.Tensor, 
-        hidden_dim: list[int] = [64, 128, 64], 
-        dropout: float = 0.5, 
-        device: str = "cpu"
+        data: Dict[str, List], 
+        search_space:Dict,
+        hidden_dim:List[int] = [64, 128, 64], 
+        dropout:float = 0.5, 
+        device:str = "cpu"
     ) -> None:
         """
         Initialize the Estimator model.
@@ -43,7 +48,9 @@ class Estimator:
         """
         self.device = device
 
-        self.data = torch.tensor(data, dtype=torch.float32, device=self.device)
+        assert len(list(data.values())[0]) > 3, f"The data must have at least three datapoints got {len(list(data.values())[0])}"
+        self.encoder = ConfigEncoder(search_space=search_space)
+        self.data = torch.tensor(self.encoder(data, with_metric=True), dtype=torch.float32, device=self.device)
 
         self.x_mu = torch.tensor([0.0], device=device)
         self.x_std = torch.tensor([1.0], device=device)
@@ -51,9 +58,6 @@ class Estimator:
         layers = []
         input_features = self.data.size(1) - 1
 
-        # Input normalization (Affine=False acts as fixed scaling if params are frozen, 
-        # but here it learns during training)
-        layers.append(nn.BatchNorm1d(input_features, affine=False))
         layers.append(nn.Linear(input_features, hidden_dim[0]))
         layers.append(nn.BatchNorm1d(hidden_dim[0]))
         layers.append(nn.ReLU(inplace=True))
@@ -100,7 +104,7 @@ class Estimator:
 
         train_loader = DataLoader(TensorDataset(X_train, Y_train), batch_size=64, shuffle=True)
         val_loader = DataLoader(TensorDataset(X_val, Y_val), batch_size=64, shuffle=False)
-        
+
         history = self.model.fit(
             train_dataloader=train_loader, 
             epochs=epochs, 
@@ -118,10 +122,11 @@ class Estimator:
         return history
     
     @torch.no_grad()
-    def predict(self, X):
+    def predict(self, config:Dict[str, Any]):
         """
         Predicts the metric for a given input configuration.
         """
+        X = self.encoder(config, with_metric=False)
         self.model.eval()
         
         if not isinstance(X, torch.Tensor):
@@ -143,7 +148,7 @@ class ConfigEncoder:
             self, 
             search_space: Dict[str, Iterable],
             categorical_keys:List[str] = [
-                "prune.metrics", 
+                "prune_channel.metric", 
                 "quantize.scheme", 
                 "quantize.granularity", 
                 "quantize.bitwidth"
@@ -165,7 +170,6 @@ class ConfigEncoder:
         """
         Sets up the encoder to handle the data normalisation and one-hot encoding for categorical mapping
         """
-
         # Normalize Integer Ranges, with the max value
         for key in self.search_space:
             if key not in self.categorical_keys:
@@ -187,35 +191,84 @@ class ConfigEncoder:
             self.feature_dim += len(unique_vals)
 
 
-    def encode(self, config:Dict[str, Any]) -> torch.Tensor:
+    def encode(self, config:Dict[str, Union[Any, Iterable]], with_metric:bool=False) -> torch.Tensor:
         """
         Encodes the network configuration to numerical types that can be ingested by the estimator
         model 
 
         :param: config: the model congiration to be converted to a valid input for the estimator
+        :param: with_metric: if the config has metric item in it, it seperate when you are trying to
+                for training vs prediction
 
         :return: config_tensor: the tensor of the model config encoded to a numerical format to be
                  be ingested by the model
         """
         vector = []
         
-        # Encode integer type, normalized as float
-        for key in self.search_space:
-            if key not in self.categorical_keys:
-                val = config.get(key, 0) # Default to 0 if missing
-                max_val = self.encoders[key]['max']
-                vector.append(val / max_val if max_val > 0 else 0)
+        # if the values are list, meaning it not just a single point as can be provided by estimator
+        length = None
+        for i, (config_key, config_value) in enumerate(config.items()):
+            if isinstance(config_value, list):
+                if i == 0: length = len(config_value)
+                else:
+                    assert len(config_value) == length, (
+                        f"if any configuration value is a list then all "
+                        f"should be of the same length, got {config_key} to be of length "
+                        f"{len(config)} and working with length of {length}"
+                        )
 
-        # Encode Categorical (One-Hot)
-        for key in self.categorical_keys:
-            enc_info = self.encoders[key]
-            val = str(config.get(key)) # Convert input to string to match key map
-            
-            # Create One-Hot Vector
-            one_hot = [0] * enc_info['size']
-            if val in enc_info['map']:
-                idx = enc_info['map'][val]
-                one_hot[idx] = 1
-            vector.extend(one_hot)
-            
+        if length is None:
+            # Encode integer type, normalized as float
+            for key in self.search_space:
+                if key not in self.categorical_keys:
+                    val = config.get(key)
+                    max_val = self.encoders[key]['max']
+                    vector.append(val / max_val if max_val > 0 else 0)
+
+            # Encode Categorical (One-Hot)
+            for key in self.categorical_keys:
+                enc_info = self.encoders[key]
+                val = str(config.get(key)) # Convert input to string to match key map
+                
+                # Create One-Hot Vector
+                one_hot = [0] * enc_info['size']
+                if val in enc_info['map']:
+                    idx = enc_info['map'][val]
+                    one_hot[idx] = 1
+                vector.extend(one_hot)
+            # getting the metric
+            if with_metric: vector.append(config.get("metric")[0])
+        
+        else:
+            for i in range(length):
+                vector_i = []
+                # Encode integer type, normalized as float
+                for key in self.search_space:
+                    if key not in self.categorical_keys:
+                        val = config.get(key)[i]
+                        max_val = self.encoders[key]['max']
+                        vector_i.append(val / max_val if max_val > 0 else 0)
+
+                # Encode Categorical (One-Hot)
+                for key in self.categorical_keys:
+                    enc_info = self.encoders[key]
+                    val = str(config.get(key)[i]) # Convert input to string to match key map
+                    
+                    # Create One-Hot Vector
+                    one_hot = [0] * enc_info['size']
+                    if val in enc_info['map']:
+                        idx = enc_info['map'][val]
+                        one_hot[idx] = 1
+                    vector_i.extend(one_hot)
+                # getting the metric
+                if with_metric: vector_i.append(config.get("metric")[0])
+        
+                vector.append(vector_i)
         return torch.tensor(vector, dtype=self.dtype)
+    
+    def __call__(self, config:Dict[str, Union[Any, Iterable]], with_metric:bool=False) -> torch.Tensor:
+        """
+        Encodes a model compression configuration
+        """
+        return self.encode(config, with_metric)
+    
