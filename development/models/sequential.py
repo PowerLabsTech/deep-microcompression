@@ -605,6 +605,27 @@ class Sequential(nn.Sequential):
         }
     
 
+    def get_commpression_possible_hyperparameters(self) -> Dict[str, Iterable]:
+        """
+        Defines the valid search space for Quantization.
+        
+        :return: compression_hyperparameters: this is a dictionary with keys as
+                 the compression parameter name from its root join by ".". Basically
+                 it is a flatted dict with each level indicated by a "."
+        """
+        prune_hp = self.get_prune_channel_possible_hyperparameters()
+        quant_hp = self.get_quantize_possible_hyperparameters()
+
+        compression_hp = dict()
+        for name, hp in prune_hp.items():
+            compression_hp[f"prune.{name}"] = hp
+        
+        for name, hp in quant_hp.items():
+            compression_hp[f"quantize.{name}"] = hp
+
+        return compression_hp
+
+
     def get_all_compression_hyperparameter(self) -> List:
         """
         Generates the exhaustive Grid Search space for model optimization.
