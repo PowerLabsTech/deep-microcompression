@@ -191,11 +191,11 @@ class Sequential(nn.Sequential):
     
     @output_quantize.setter
     def output_quantize(self, _: Any):
-    # Read-only property derived from the final layer's state
+        # Read-only property derived from the final layer's state
         pass
 
 
-    def forward(self, input):
+    def forward(self, input:torch.Tensor):
         """
         Forward pass executing the DMC inference pipeline.
         
@@ -389,8 +389,8 @@ class Sequential(nn.Sequential):
 
     def init_compress(
         self,
-        config: dict,
-        input_shape: tuple,
+        config: Dict,
+        input_shape: Tuple,
         calibration_data: Optional[torch.Tensor] = None
     ) -> "Sequential":
         """
@@ -418,6 +418,7 @@ class Sequential(nn.Sequential):
             A new, independent Sequential instance configured for the requested 
             compression pipeline.
         """
+        config = copy.deepcopy(config)
         # Validate configuration against supported DMC schemes
         if not self.is_compression_config_valid(config):
             raise ValueError("Invalid compression configuration!")
@@ -531,7 +532,7 @@ class Sequential(nn.Sequential):
 
 
     
-    def init_prune_channel(self):
+    def init_prune_channel(self) -> None:
         """
         Executes Structured Channel Pruning.
 
@@ -569,7 +570,7 @@ class Sequential(nn.Sequential):
         )
         return 
     
-    def get_prune_channel_possible_hyperparameters(self) -> Dict:
+    def get_prune_channel_possible_hyperparameters(self) -> Dict[str, Iterable]:
         """
         Defines the valid search space for Structured Pruning.
 
@@ -587,10 +588,13 @@ class Sequential(nn.Sequential):
         for name, layer in list(self.names_layers())[:-1]:
             layer_prune_possible_hypermeters = layer.get_prune_channel_possible_hyperparameters()
             if layer_prune_possible_hypermeters is not None:
-                prune_possible_hypermeters[name] = layer_prune_possible_hypermeters
+                prune_possible_hypermeters[f"sparsity.{name}"] = layer_prune_possible_hypermeters
+
+        # TODO: To extend to other metric type
+        prune_possible_hypermeters["metrics"] = ["l2"]
         return prune_possible_hypermeters
     
-    def get_quantize_possible_hyperparameters(self) -> Dict:
+    def get_quantize_possible_hyperparameters(self) -> Dict[str, Iterable]:
         """
         Defines the valid search space for Quantization.
         """
@@ -600,6 +604,7 @@ class Sequential(nn.Sequential):
             "bitwidth" : [None, 2, 4, 8]
         }
     
+
     def get_all_compression_hyperparameter(self) -> List:
         """
         Generates the exhaustive Grid Search space for model optimization.
@@ -641,7 +646,7 @@ class Sequential(nn.Sequential):
         }))
 
 
-    def decode_compression_dict_hyperparameter(self, compression_dict):
+    def decode_compression_dict_hyperparameter(self, compression_dict: Dict[str, Any]) -> Dict[str, Iterable]:
         """
         Reconstructs a hierarchical configuration dictionary from a flattened 
         search result.
@@ -670,7 +675,7 @@ class Sequential(nn.Sequential):
         return compression_config
         
     
-    def init_quantize(self, calibration_data=None):
+    def init_quantize(self, calibration_data:Optional[torch.Tensor]=None) -> None:
         """
         Initializes the Quantization stage.
 
@@ -711,7 +716,7 @@ class Sequential(nn.Sequential):
 
 
 
-    def fuse(self, batchnorm_only: bool = False, device=None) -> "Sequential":
+    def fuse(self, batchnorm_only:bool=False, device:Optional[str]=None) -> "Sequential":
         """
         Fuses adjacent layers to optimize inference speed and reduce footprint.
 
@@ -787,7 +792,7 @@ class Sequential(nn.Sequential):
         return fused_model
 
         
-    def get_size_in_bits(self):
+    def get_size_in_bits(self) -> int:
         """Calculates total model size in bits (Sum of all packed layers)."""
         size = 0
         for layer in self.layers():
@@ -795,7 +800,7 @@ class Sequential(nn.Sequential):
         return size
     
 
-    def get_size_in_bytes(self):
+    def get_size_in_bytes(self) -> int:
         """
         Calculates total model binary size in Bytes.
         """
@@ -803,7 +808,7 @@ class Sequential(nn.Sequential):
 
 
 
-    def get_max_workspace_arena(self, input_shape) -> Tuple:
+    def get_max_workspace_arena(self, input_shape:Tuple) -> Tuple:
         """
         Calculates the minimum SRAM (Static RAM) required for inference.
 
@@ -868,7 +873,14 @@ class Sequential(nn.Sequential):
 
 
     @torch.no_grad()
-    def convert_to_c(self, input_shape, var_name: str, src_dir: str = "./", include_dir:str = "./", test_input = None) -> None:
+    def convert_to_c(
+        self, 
+        input_shape:Tuple, 
+        var_name:str, 
+        src_dir:str="./", 
+        include_dir:str = "./", 
+        test_input:Optional[torch.Tensor]=None
+    ) -> None:
         """Generate C code for deployment
         
         Args:
