@@ -705,6 +705,7 @@ class Sequential(nn.Sequential):
         # We run a forward pass with calibration data to let the observers
         self.train() # Ensure observers are updating
         if scheme == QuantizationScheme.STATIC:
+            assert calibration_data is not None, f"Pass a calibration data when doing static quantization"
             self.to(calibration_data.device)
             self(calibration_data)
 
