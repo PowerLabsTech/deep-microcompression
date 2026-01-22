@@ -876,6 +876,7 @@ class Sequential(nn.Sequential):
         var_name:str, 
         src_dir:str="./", 
         include_dir:str = "./", 
+        for_arduino:bool=False,
         test_input:Optional[torch.Tensor]=None
     ) -> None:
         """Generate C code for deployment
