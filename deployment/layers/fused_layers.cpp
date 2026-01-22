@@ -3,9 +3,9 @@
 
 #if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME == NONE
 
-float* LinearReLU::forward(float* input, float* output) {
+float* LinearReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
 
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
@@ -22,13 +22,11 @@ float* LinearReLU::forward(float* input, float* output) {
 
 
 
-float* Conv2dReLU::forward(float* input, float* output) {
+float* Conv2dReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (
-        this->input_channel_size * 
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * 
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right)
-    ) : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
 
     float output_temp;
 
@@ -87,9 +85,9 @@ float* Conv2dReLU::forward(float* input, float* output) {
 }
 
 
-float* LinearReLU6::forward(float* input, float* output) {
+float* LinearReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
 
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
@@ -106,13 +104,11 @@ float* LinearReLU6::forward(float* input, float* output) {
 
 
 
-float* Conv2dReLU6::forward(float* input, float* output) {
+float* Conv2dReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (
-        this->input_channel_size * 
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * 
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right)
-    ) : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
 
     float output_temp;
 
@@ -174,9 +170,9 @@ float* Conv2dReLU6::forward(float* input, float* output) {
 #elif QUANTIZATION_SCHEME == DYNAMIC 
 
 
-float* LinearReLU::forward(float* input, float* output) {
+float* LinearReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
 
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
@@ -198,13 +194,11 @@ float* LinearReLU::forward(float* input, float* output) {
 
 
 
-float* Conv2dReLU::forward(float* input, float* output) {
+float* Conv2dReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (
-        this->input_channel_size * 
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * 
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right)
-    ) : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
 
     float output_temp;
 
@@ -266,9 +260,9 @@ float* Conv2dReLU::forward(float* input, float* output) {
 }
 
 
-float* LinearReLU6::forward(float* input, float* output) {
+float* LinearReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
 
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
@@ -290,13 +284,11 @@ float* LinearReLU6::forward(float* input, float* output) {
 
 
 
-float* Conv2dReLU6::forward(float* input, float* output) {
+float* Conv2dReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (
-        this->input_channel_size * 
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * 
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right)
-    ) : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
 
     float output_temp;
 
@@ -361,9 +353,9 @@ float* Conv2dReLU6::forward(float* input, float* output) {
 
 
 
-int8_t* LinearReLU::forward(int8_t* input, int8_t* output) {
+int8_t* LinearReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
 
     int32_t output_temp;
 
@@ -390,13 +382,11 @@ int8_t* LinearReLU::forward(int8_t* input, int8_t* output) {
     return output;
 }
 
-int8_t* Conv2dReLU::forward(int8_t* input, int8_t* output) {
+int8_t* Conv2dReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (
-        this->input_channel_size * 
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * 
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right)
-    ) : output;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
 
     int32_t output_temp;
 
@@ -467,9 +457,9 @@ int8_t* Conv2dReLU::forward(int8_t* input, int8_t* output) {
 
 
 
-int8_t* LinearReLU6::forward(int8_t* input, int8_t* output) {
+int8_t* LinearReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
 
     int32_t output_temp;
     int32_t six_point = (int32_t)((float)6. / this->bias_scale);
@@ -496,13 +486,11 @@ int8_t* LinearReLU6::forward(int8_t* input, int8_t* output) {
     return output;
 }
 
-int8_t* Conv2dReLU6::forward(int8_t* input, int8_t* output) {
+int8_t* Conv2dReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (
-        this->input_channel_size * 
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * 
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right)
-    ) : output;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
 
     int32_t output_temp;
     int32_t six_point = (int32_t)((float)6. / this->bias_scale);

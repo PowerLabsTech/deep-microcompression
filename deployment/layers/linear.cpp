@@ -34,9 +34,9 @@ Linear::Linear(uint16_t output_size, uint16_t input_size,
  * 
  * Computes: output = input * weight^T + bias
  */
-float* Linear::forward(float* input, float* output) {
+float* Linear::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
 
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
@@ -82,9 +82,9 @@ Linear::Linear(uint16_t output_size, uint16_t input_size,
  * 
  * Computes: output = input * dequant(weight)^T + bias
  */
-float* Linear::forward(float* input, float* output) {
+float* Linear::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
 
     float output_temp;
 
@@ -134,9 +134,9 @@ Linear::Linear(uint16_t output_size, uint16_t input_size, const int8_t* weight, 
  * 
  * Computes quantized output with proper scaling and zero-point adjustments
  */
-int8_t* Linear::forward(int8_t* input, int8_t* output) {
+int8_t* Linear::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
 
     int32_t output_temp;
 

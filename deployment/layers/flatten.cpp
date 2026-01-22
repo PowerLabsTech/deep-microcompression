@@ -28,9 +28,9 @@ Flatten::Flatten(uint32_t input_size) {
  * Simply copies input to output as flattening is just a view operation.
  * Maintains same memory layout but changes tensor shape interpretation.
  */
-float* Flatten::forward(float* input, float* output) {
+float* Flatten::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
 
     // Perform element-wise copy (no transformation needed)
     for (uint32_t i = 0; i < this->input_size; i++) {
@@ -48,9 +48,9 @@ Flatten::Flatten(uint32_t input_size) {
     this->input_size = input_size;
 }
 
-int8_t* Flatten::forward(int8_t* input, int8_t* output) {
+int8_t* Flatten::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
 
     // Perform element-wise copy (no transformation needed)
     for (uint32_t i = 0; i < this->input_size; i++) {

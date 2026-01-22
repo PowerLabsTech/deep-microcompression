@@ -31,12 +31,13 @@ class Layer {
 public:
     /**
      * @brief Forward pass interface for floating-point layers
-     * @param input Pointer to input tensor (float)
-     * @param output Pointer to output tensor (float)
+     * @param input Pointer to input tensor for the layer(float)
+     * @param workspace_start Pointer to workspace start start (float)
+     * @param workspace_size size of the pre-allocated workspace
      * 
      * @note Pure virtual function - must be implemented by derived classes
      */
-    virtual float* forward(float* input, float* output) = 0;
+    virtual float* forward(float* input, float* workspace_start, uint32_t workspace_size) = 0;
 };
 
 #else // QUANTIZATION_SCHEME
@@ -45,12 +46,13 @@ class Layer {
 public:
     /**
      * @brief Forward pass interface for floating-point layers
-     * @param input Pointer to input tensor (float)
-     * @param output Pointer to output tensor (float)
+     * @param input Pointer to input tensor for the layer(int8_t)
+     * @param workspace_start Pointer to workspace start start (int8_t)
+     * @param workspace_size size of the pre-allocated workspace
      * 
      * @note Pure virtual function - must be implemented by derived classes
      */
-    virtual int8_t* forward(int8_t* input, int8_t* output) = 0;
+    virtual int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) = 0;
 };
 
 

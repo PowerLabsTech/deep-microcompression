@@ -30,9 +30,9 @@ ReLU::ReLU(uint32_t input_size) {
  * 
  * Computes: output[i] = max(0, input[i]) for each element
  */
-float* ReLU::forward(float* input, float* output) {
+float* ReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
 
     // Apply ReLU function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
@@ -47,9 +47,9 @@ ReLU6::ReLU6(uint32_t input_size) {
     this->input_size = input_size;
 }
 
-float* ReLU6::forward(float* input, float* output) {
+float* ReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
 
     // Apply ReLU6 function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
@@ -68,9 +68,9 @@ ReLU::ReLU(uint32_t input_size, int8_t input_zero_point) {
     this->input_zero_point = input_zero_point;
 }
 
-int8_t* ReLU::forward(int8_t* input, int8_t* output) {
+int8_t* ReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+        int8_t* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
 
     // Apply quantized ReLU function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
@@ -88,9 +88,9 @@ ReLU6::ReLU6(uint32_t input_size, int8_t input_zero_point, int8_t input_six_poin
     this->input_six_point = input_six_point;
 }
 
-int8_t* ReLU6::forward(int8_t* input, int8_t* output) {
+int8_t* ReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + this->input_size : output;
+        int8_t* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
 
     // Apply quantized ReLU6 function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {

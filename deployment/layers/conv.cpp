@@ -53,13 +53,11 @@ Conv2d::Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t in
  * @param input Input tensor (float)
  * @param output Output tensor (float)
  */
-float* Conv2d::forward(float* input, float* output) {
+float* Conv2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (
-        this->input_channel_size * 
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * 
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right)
-    ) : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size 
+    ) : workspace_start;
 
     float output_temp;
 
@@ -168,13 +166,11 @@ Conv2d::Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t in
  * @param input Input tensor (float)
  * @param output Output tensor (float)
  */
-float* Conv2d::forward(float* input, float* output) {
+float* Conv2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (
-        this->input_channel_size * 
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * 
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right)
-    ) : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size 
+    ) : workspace_start;
 
     // uint32_t output_index;
     float output_temp;
@@ -279,13 +275,11 @@ Conv2d::Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t in
  * @param input Input tensor (int8_t)
  * @param output Output tensor (int8_t)
  */
-int8_t* Conv2d::forward(int8_t* input, int8_t* output) {
+int8_t* Conv2d::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (
-        this->input_channel_size * 
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * 
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right)
-    ) : output;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size 
+    ) : workspace_start;
 
 
     uint16_t input_channel_per_group = this->input_channel_size / this->groups;

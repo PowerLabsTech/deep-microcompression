@@ -876,6 +876,7 @@ class Sequential(nn.Sequential):
         var_name:str, 
         src_dir:str="./", 
         include_dir:str = "./", 
+        for_arduino:bool=False,
         test_input:Optional[torch.Tensor]=None
     ) -> None:
         """Generate C code for deployment
@@ -952,7 +953,7 @@ class Sequential(nn.Sequential):
             f"extern Sequential {var_name};\n\n"
         )
         layers_def = (
-            f"{self.__class__.__name__} {var_name}(layers, LAYERS_LEN, workspace, MAX_OUTPUT_EVEN_SIZE);\n"
+            f"{self.__class__.__name__} {var_name}(layers, LAYERS_LEN, workspace, MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE);\n"
             f"\nLayer* layers[LAYERS_LEN] = {{\n"
         )
         

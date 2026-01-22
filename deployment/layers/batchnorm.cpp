@@ -15,10 +15,10 @@ BatchNorm2d::BatchNorm2d(uint16_t input_channel_size, uint16_t input_row_size, u
     this->folded_bias = folded_bias;
 }
 
-float* BatchNorm2d::forward(float* input, float* output) {
+float* BatchNorm2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
 
     // Getting the output start address with the input size as offset
-    output = output == nullptr ? input + (this->input_channel_size * this->input_row_size * this->input_col_size) : output;
+    float* output = input == workspace_start ? workspace_start + workspace_size - (this->input_channel_size * this->input_row_size * this->input_col_size) : workspace_start;
 
     for (uint16_t n = 0; n < this->input_channel_size; n++) {
         for (uint16_t m = 0; m < this->input_row_size; m++) {

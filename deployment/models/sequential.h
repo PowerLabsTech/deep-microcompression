@@ -35,17 +35,18 @@ class Sequential {
 private:
     Layer** layers;                  ///< Array of layer pointers
     uint8_t layers_len;             ///< Number of layers in the model
+    uint32_t workspace_size;        ///< Size of the pre-allocated memory
 
 public:
     float* input;                   ///< Pointer to model input buffer
-
     /**
      * @brief Constructs a floating-point sequential model
      * @param layers Array of layer pointers
      * @param layers_len Number of layers
      * @param workspace Pre-allocated workspace memory
+     * @param workspace_size Size of the pre-allocated workspace memory
      */
-    Sequential(Layer** layers, uint8_t layers_len, float* workspace);
+    Sequential(Layer** layers, uint8_t layers_len, float* workspace, uint32_t workspace_size);
 
     /**
      * @brief Executes forward pass through all layers
@@ -64,6 +65,7 @@ class Sequential {
 private:
     Layer** layers;                  ///< Array of layer pointers
     uint8_t layers_len;             ///< Number of layers in the model
+    uint32_t workspace_size;        ///< Size of the pre-allocated memory
 
 public:
     int8_t* input;                  ///< Pointer to quantized input buffer
@@ -73,8 +75,9 @@ public:
      * @param layers Array of layer pointers
      * @param layers_len Number of layers
      * @param workspace Pre-allocated workspace memory
+     * @param workspace_size Size of the pre-allocated workspace memory
      */
-    Sequential(Layer** layers, uint8_t layers_len, int8_t* workspace);
+    Sequential(Layer** layers, uint8_t layers_len, int8_t* workspace, uint32_t workspace_size);
     /**
      * @brief Executes forward pass through all quantized layers
      * 
