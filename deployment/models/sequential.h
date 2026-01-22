@@ -35,30 +35,24 @@ class Sequential {
 private:
     Layer** layers;                  ///< Array of layer pointers
     uint8_t layers_len;             ///< Number of layers in the model
-    
-    float* workspace_even_layer;     ///< Workspace buffer for even layers
-    float* workspace_odd_layer;      ///< Workspace buffer for odd layers
 
 public:
     float* input;                   ///< Pointer to model input buffer
-    float* output;                  ///< Pointer to final output buffer
 
     /**
      * @brief Constructs a floating-point sequential model
      * @param layers Array of layer pointers
      * @param layers_len Number of layers
      * @param workspace Pre-allocated workspace memory
-     * @param workspace_even_layer_size Size of even layer partition
      */
-    Sequential(Layer** layers, uint8_t layers_len, 
-              float* workspace, uint32_t workspace_even_layer_size);
+    Sequential(Layer** layers, uint8_t layers_len, float* workspace);
 
     /**
      * @brief Executes forward pass through all layers
      * 
      * Uses alternating buffers between layers to optimize memory usage
      */
-    void predict(void);
+    float* predict(void);
 };
 
 
@@ -70,30 +64,23 @@ class Sequential {
 private:
     Layer** layers;                  ///< Array of layer pointers
     uint8_t layers_len;             ///< Number of layers in the model
-    
-    int8_t* workspace_even_layer;    ///< Workspace buffer for even layers
-    int8_t* workspace_odd_layer;     ///< Workspace buffer for odd layers
 
 public:
     int8_t* input;                  ///< Pointer to quantized input buffer
-    int8_t* output;                 ///< Pointer to final quantized output
 
     /**
      * @brief Constructs a quantized sequential model
      * @param layers Array of layer pointers
      * @param layers_len Number of layers
      * @param workspace Pre-allocated workspace memory
-     * @param workspace_even_layer_size Size of even layer partition
      */
-    Sequential(Layer** layers, uint8_t layers_len,
-              int8_t* workspace, uint32_t workspace_even_layer_size);
-
+    Sequential(Layer** layers, uint8_t layers_len, int8_t* workspace);
     /**
      * @brief Executes forward pass through all quantized layers
      * 
      * Uses same alternating buffer strategy as floating-point version
      */
-    void predict(void);
+    int8_t* predict(void);
 };
 
 #endif // QUANTIZATION_SCHEME

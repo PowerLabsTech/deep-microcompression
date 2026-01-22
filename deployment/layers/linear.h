@@ -42,7 +42,7 @@ public:
      * @param input Pointer to input tensor (float)
      * @param output Pointer to output tensor (float)
      */
-    void forward(float* input, float* output);
+    float* forward(float* input, float* output);
 };
 
 
@@ -79,7 +79,7 @@ public:
      * @param input Pointer to input tensor (float)
      * @param output Pointer to output tensor (float)
      */
-    void forward(float* input, float* output) override;
+    float* forward(float* input, float* output);
 };
 
 
@@ -100,7 +100,7 @@ public:
     Linear(uint16_t output_size, uint16_t input_size, const int8_t* weight, const int32_t* bias,
           float output_scale, int8_t output_zero_point, int8_t input_zero_point,  float bias_scale);
 
-    void forward(int8_t* input, int8_t* output) override;
+    int8_t* forward(int8_t* input, int8_t* output);
 };
 
 

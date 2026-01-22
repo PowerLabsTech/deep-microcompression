@@ -23,7 +23,7 @@ public:
     BatchNorm2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
                 const float* folded_weight, const float* folded_bias);
 
-    void forward(float* input, float* output);
+    float* forward(float* input, float* output);
 };
 
 

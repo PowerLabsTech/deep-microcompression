@@ -18,22 +18,14 @@
  * @param layers Array of layer pointers
  * @param layers_len Number of layers in model
  * @param workspace Pre-allocated workspace buffer (float)
- * @param workspace_even_layer_size Size of even layer workspace partition
  * 
  * @note Uses ping-pong strategy to alternate between workspace_even_layer
  *       and workspace_odd_layer for memory efficiency
  */
-Sequential::Sequential(Layer **layers, uint8_t layers_len, float *workspace, 
-                      uint32_t workspace_even_layer_size) {
+Sequential::Sequential(Layer **layers, uint8_t layers_len, float *workspace) {
     this->layers = layers;
     this->layers_len = layers_len;
-    this->workspace_even_layer = workspace;
-    this->workspace_odd_layer = workspace + workspace_even_layer_size;
-
-    // Set model input/output buffers based on double-buffering strategy
-    this->input = this->workspace_even_layer;
-    this->output = (layers_len % 2 == DLAI_EVEN) ? this->workspace_even_layer 
-                                               : this->workspace_odd_layer;   
+    this->input = workspace;
 }
 
 /**
@@ -43,50 +35,45 @@ Sequential::Sequential(Layer **layers, uint8_t layers_len, float *workspace,
  * - Even layers write to odd workspace
  * - Odd layers write to even workspace
  */
-void Sequential::predict(void) {
+float* Sequential::predict(void) {
+    float* next_input = nullptr;
+
     for (uint8_t i = 0; i < this->layers_len; i++) {
         switch (i % 2) {
             case DLAI_EVEN:
-                this->layers[i]->forward(this->workspace_even_layer, 
-                                       this->workspace_odd_layer);
+                next_input = this->layers[i]->forward(this->input, nullptr);
                 break;
             default:
-                this->layers[i]->forward(this->workspace_odd_layer, 
-                                       this->workspace_even_layer);
+                next_input = this->layers[i]->forward(next_input, this->input);
                 break;
         }
     }
+    return next_input;
 }
 
 
 #else // QUATIZATION_SCHEME
 
-Sequential::Sequential(Layer **layers, uint8_t layers_len, int8_t *workspace, 
-                      uint32_t workspace_even_layer_size) {
+Sequential::Sequential(Layer **layers, uint8_t layers_len, int8_t *workspace) {
     this->layers = layers;
     this->layers_len = layers_len;
-    this->workspace_even_layer = workspace;
-    this->workspace_odd_layer = workspace + workspace_even_layer_size;
-
-    // Set model input/output buffers based on ping-pong strategy
-    this->input = this->workspace_even_layer;
-    this->output = (layers_len % 2 == DLAI_EVEN) ? this->workspace_even_layer 
-                                               : this->workspace_odd_layer;   
+    this->input = workspace;
 }
 
-void Sequential::predict(void) {
+int8_t* Sequential::predict(void) {
+    int8_t* next_input = nullptr;
+
     for (uint8_t i = 0; i < this->layers_len; i++) {
         switch (i % 2) {
             case DLAI_EVEN:
-                this->layers[i]->forward(this->workspace_even_layer, 
-                                       this->workspace_odd_layer);
+                next_input = this->layers[i]->forward(input=this->input, start=nullptr);
                 break;
             default:
-                this->layers[i]->forward(this->workspace_odd_layer, 
-                                       this->workspace_even_layer);
+                next_input = this->layers[i]->forward(input=next_input, start=this->input);
                 break;
         }
     }
+    return next_input;
 }
 
 #endif // QUANTIZATION_SCHEME

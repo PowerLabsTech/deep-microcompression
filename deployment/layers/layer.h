@@ -36,7 +36,7 @@ public:
      * 
      * @note Pure virtual function - must be implemented by derived classes
      */
-    virtual void forward(float* input, float* output) = 0;
+    virtual float* forward(float* input, float* output) = 0;
 };
 
 #else // QUANTIZATION_SCHEME
@@ -50,7 +50,7 @@ public:
      * 
      * @note Pure virtual function - must be implemented by derived classes
      */
-    virtual void forward(int8_t* input, int8_t* output) = 0;
+    virtual int8_t* forward(int8_t* input, int8_t* output) = 0;
 };
 
 

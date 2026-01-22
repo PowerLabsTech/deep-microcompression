@@ -11,8 +11,8 @@ class Conv2dReLU: public Conv2d {
 public:
     using Conv2d::Conv2d;
 
-    void forward(float* input, float* output);
-    void forward(int8_t* input, int8_t* output);
+    float* forward(float* input, float* output);
+    int8_t* forward(int8_t* input, int8_t* output);
 };
 
 
@@ -21,16 +21,16 @@ public:
 
     using Linear::Linear;
 
-    void forward(float* input, float* output);
-    void forward(int8_t* input, int8_t* output);
+    float* forward(float* input, float* output);
+    int8_t* forward(int8_t* input, int8_t* output);
 };
 
 class Conv2dReLU6: public Conv2d {
 public:
     using Conv2d::Conv2d;
 
-    void forward(float* input, float* output);
-    void forward(int8_t* input, int8_t* output);
+    float* forward(float* input, float* output);
+    int8_t* forward(int8_t* input, int8_t* output);
 };
 
 
@@ -39,8 +39,8 @@ public:
 
     using Linear::Linear;
 
-    void forward(float* input, float* output);
-    void forward(int8_t* input, int8_t* output);
+    float* forward(float* input, float* output);
+    int8_t* forward(int8_t* input, int8_t* output);
 };
 
 #endif// FUSED_LAYERS_H
