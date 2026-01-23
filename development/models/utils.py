@@ -142,7 +142,7 @@ def get_nas_compression_data(
     compression_config_data = defaultdict(list)
     
     compression_possible_hp = model.get_commpression_possible_hyperparameters()
-    for _ in range(num_data):
+    for _ in tqdm(range(num_data)):
         # generating a random configuration
         valid = False
         while not valid:
