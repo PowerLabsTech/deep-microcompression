@@ -50,7 +50,7 @@ Flatten::Flatten(uint32_t input_size) {
 
 int8_t* Flatten::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil(this->input_size / DATA_PER_BYTE) : workspace_start;
 
     // Perform element-wise copy (no transformation needed)
     for (uint32_t i = 0; i < this->input_size; i++) {
