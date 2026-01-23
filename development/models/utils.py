@@ -112,6 +112,7 @@ def get_nas_compression_data(
     data_loader:torch.utils.data.DataLoader, 
     metric_fun:Callable[[torch.Tensor, torch.Tensor], float], 
     calibration_data:torch.Tensor,
+    filter:Callable = lambda compressed_model, compression_config: True,
     device:str="cpu",
     num_data:int=100,
     train:bool=False,
@@ -146,16 +147,19 @@ def get_nas_compression_data(
         valid = False
         while not valid:
             compression_config = {config_key: random.choice(config_hp) for config_key, config_hp in compression_possible_hp.items()}
+            compression_config_decode = model.decode_compression_dict_hyperparameter(compression_config)
             valid = model.is_compression_config_valid(
-                model.decode_compression_dict_hyperparameter(compression_config),
+                compression_config_decode,
                 compression_keys=["quantize"],
                 raise_error=False
             )
+            if valid:
+                compressed_model = model.init_compress(
+                    config=compression_config_decode,
+                    input_shape=input_shape, calibration_data=calibration_data
+                )
 
-        compressed_model = model.init_compress(
-            config=model.decode_compression_dict_hyperparameter(compression_config),
-            input_shape=input_shape, calibration_data=calibration_data
-        )
+                valid = filter(compressed_model, compression_config_decode)
         
         if train:
             optimizer_fun = torch.optim.SGD(compressed_model.parameters(), lr=1e-3, momentum=.9, weight_decay=5e-4)
@@ -189,6 +193,28 @@ def get_nas_compression_data(
         compression_config_data["metric"].append(compressed_model_metric["metric"])
 
     return compression_config_data
+
+
+def get_size_of_compression(
+    model:Sequential, 
+    filter:Callable = lambda compression_config: True
+):
+    # helper to list all compression combinations
+    num_valid_compressions = 0
+    search_space = model.get_commpression_possible_hyperparameters()
+    config_keys = list(search_space.keys())
+    config_values = list(search_space.values())
+    for combo in tqdm(itertools.product(*config_values)):
+        config = {config_key: config_value for config_key, config_value in zip(config_keys, combo)}
+        decode_config = model.decode_compression_dict_hyperparameter(config)
+        if model.is_compression_config_valid(
+            decode_config, 
+            compression_keys=["quantize"], 
+            raise_error=False
+        ):
+            if filter(decode_config):
+                num_valid_compressions += 1
+    return num_valid_compressions
 
 
 def brute_force_search_compression_config(
@@ -233,7 +259,7 @@ def brute_force_search_compression_config(
         config_key: config_values[0] for config_key, config_values in search_space.items()
     })
 
-    # helper to list all prune combinations
+    # helper to list all compression combinations
     def get_all_combinations(search_space):
         config_keys = list(search_space.keys())
         config_values = list(search_space.values())
