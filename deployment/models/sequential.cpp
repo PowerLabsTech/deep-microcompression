@@ -57,7 +57,7 @@ float* Sequential::predict(void) {
 
 #else // QUATIZATION_SCHEME
 
-Sequential::Sequential(Layer **layers, uint8_t layers_len, int8_t *workspace), uint32_t workspace_size {
+Sequential::Sequential(Layer **layers, uint8_t layers_len, int8_t *workspace, uint32_t workspace_size) {
     this->layers = layers;
     this->layers_len = layers_len;
     this->input = workspace;

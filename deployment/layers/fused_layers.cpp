@@ -355,7 +355,7 @@ float* Conv2dReLU6::forward(float* input, float* workspace_start, uint32_t works
 
 int8_t* LinearReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil(this->output_size / DATA_PER_BYTE) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(this->output_size / DATA_PER_BYTE) : workspace_start;
 
     int32_t output_temp;
 
@@ -384,7 +384,7 @@ int8_t* LinearReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t wor
 
 int8_t* Conv2dReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil(
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(
         (this->output_channel_size * this->output_row_size * this->output_col_size) / DATA_PER_BYTE
     ) : workspace_start;
 
@@ -459,7 +459,7 @@ int8_t* Conv2dReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t wor
 
 int8_t* LinearReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil(this->output_size / DATA_PER_BYTE) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(this->output_size / DATA_PER_BYTE) : workspace_start;
 
     int32_t output_temp;
     int32_t six_point = (int32_t)((float)6. / this->bias_scale);
@@ -488,7 +488,7 @@ int8_t* LinearReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t wo
 
 int8_t* Conv2dReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil(
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(
         (this->output_channel_size * this->output_row_size * this->output_col_size) / DATA_PER_BYTE
     ) : workspace_start;
 
