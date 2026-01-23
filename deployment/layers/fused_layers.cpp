@@ -3,7 +3,10 @@
 
 #if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME == NONE
 
-void LinearReLU::forward(float* input, float* output) {
+float* LinearReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
+
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
         output_temp = this->bias ? par_read_float(this->bias, j) : 0;
@@ -13,11 +16,18 @@ void LinearReLU::forward(float* input, float* output) {
         }
         act_write_float(output, j, (relu(output_temp)));
     }
+
+    return output;
 }
 
 
 
-void Conv2dReLU::forward(float* input, float* output) {
+float* Conv2dReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
+
     float output_temp;
 
     uint16_t input_channel_per_group = this->input_channel_size / this->groups;
@@ -70,10 +80,15 @@ void Conv2dReLU::forward(float* input, float* output) {
             }
         }
     }
+
+    return output;
 }
 
 
-void LinearReLU6::forward(float* input, float* output) {
+float* LinearReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
+
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
         output_temp = this->bias ? par_read_float(this->bias, j) : 0;
@@ -83,11 +98,18 @@ void LinearReLU6::forward(float* input, float* output) {
         }
         act_write_float(output, j, relu6(output_temp));
     }
+
+    return output;
 }
 
 
 
-void Conv2dReLU6::forward(float* input, float* output) {
+float* Conv2dReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
+
     float output_temp;
 
     uint16_t input_channel_per_group = this->input_channel_size / this->groups;
@@ -140,13 +162,18 @@ void Conv2dReLU6::forward(float* input, float* output) {
             }
         }
     }
+
+    return output;
 }
 
 
 #elif QUANTIZATION_SCHEME == DYNAMIC 
 
 
-void LinearReLU::forward(float* input, float* output) {
+float* LinearReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
+
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
         output_temp = 0;
@@ -161,11 +188,18 @@ void LinearReLU::forward(float* input, float* output) {
             relu((output_temp * this->weight_scale)))
         );
     }
+
+    return output;
 }
 
 
 
-void Conv2dReLU::forward(float* input, float* output) {
+float* Conv2dReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
+
     float output_temp;
 
     uint16_t input_channel_per_group = this->input_channel_size / this->groups;
@@ -221,10 +255,15 @@ void Conv2dReLU::forward(float* input, float* output) {
             }
         }
     }
+
+    return output;
 }
 
 
-void LinearReLU6::forward(float* input, float* output) {
+float* LinearReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
+
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
         output_temp = 0;
@@ -239,11 +278,18 @@ void LinearReLU6::forward(float* input, float* output) {
             relu6((output_temp * this->weight_scale)))
         );
     }
+
+    return output;
 }
 
 
 
-void Conv2dReLU6::forward(float* input, float* output) {
+float* Conv2dReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size
+    ) : workspace_start;
+
     float output_temp;
 
     uint16_t input_channel_per_group = this->input_channel_size / this->groups;
@@ -299,13 +345,18 @@ void Conv2dReLU6::forward(float* input, float* output) {
             }
         }
     }
+
+    return output;
 }
 
 #elif QUANTIZATION_SCHEME == STATIC
 
 
 
-void LinearReLU::forward(int8_t* input, int8_t* output) {
+int8_t* LinearReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil(this->output_size / DATA_PER_BYTE) : workspace_start;
+
     int32_t output_temp;
 
     for (uint16_t j = 0; j < this->output_size; j++) {
@@ -327,9 +378,16 @@ void LinearReLU::forward(int8_t* input, int8_t* output) {
 
         // set_packed_value(output, j, output_temp);
     }
+
+    return output;
 }
 
-void Conv2dReLU::forward(int8_t* input, int8_t* output) {
+int8_t* Conv2dReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil(
+        (this->output_channel_size * this->output_row_size * this->output_col_size) / DATA_PER_BYTE
+    ) : workspace_start;
+
     int32_t output_temp;
 
     uint16_t input_channel_per_group = this->input_channel_size / this->groups;
@@ -391,13 +449,18 @@ void Conv2dReLU::forward(int8_t* input, int8_t* output) {
             }
         }
     }
+
+    return output;
 }
 
 
 
 
 
-void LinearReLU6::forward(int8_t* input, int8_t* output) {
+int8_t* LinearReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil(this->output_size / DATA_PER_BYTE) : workspace_start;
+
     int32_t output_temp;
     int32_t six_point = (int32_t)((float)6. / this->bias_scale);
 
@@ -419,9 +482,16 @@ void LinearReLU6::forward(int8_t* input, int8_t* output) {
         
         act_write_packed_intb(output, j, output_temp);
     }
+
+    return output;
 }
 
-void Conv2dReLU6::forward(int8_t* input, int8_t* output) {
+int8_t* Conv2dReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil(
+        (this->output_channel_size * this->output_row_size * this->output_col_size) / DATA_PER_BYTE
+    ) : workspace_start;
+
     int32_t output_temp;
     int32_t six_point = (int32_t)((float)6. / this->bias_scale);
 
@@ -483,6 +553,8 @@ void Conv2dReLU6::forward(int8_t* input, int8_t* output) {
             }
         }
     }
+
+    return output;
 }
 
 

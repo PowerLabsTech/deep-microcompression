@@ -805,7 +805,7 @@ class Sequential(nn.Sequential):
 
 
 
-    def get_max_workspace_arena(self, input_shape:Tuple) -> Tuple:
+    def get_min_workspace_arena(self, input_shape:Tuple) -> int:
         """
         Calculates the minimum SRAM (Static RAM) required for inference.
 
@@ -813,25 +813,24 @@ class Sequential(nn.Sequential):
         needed for bare-metal deployment. 
 
         Strategy:
-        Instead of allocating memory for every intermediate tensor, DMC uses two 
-        shared buffers. Layer i reads from Buffer A and writes to Buffer B. 
-        Layer i+1 reads from Buffer B and writes to Buffer A.
+        Instead of allocating memory for every intermediate tensor, DMC uses a 
+        shared buffers. The shared buffer is managed by either left aligning the data to the
+        start or right aligning it to the end, ensuring no space fragmentation.
+        Layer i reads its input from the start of the workspace and writes its output to be right
+        aligned with the end of the workspace
+        Layer i+1 reads its input from the end of the workspace with the none offset and writes its output
+        to the start of the workspace
 
-        Args:
-            input_shape: Dimensions of the network input.
+        :param: input_shape: Dimensions of the network input.
         
-        Returns:
-            (max_even_size, max_odd_size): The peak byte requirements for the 
-            two shared buffers.
+        :return: max_layer_acitivation_workspace_size: The peak byte requirements for the activations of the model.
         """
 
         if isinstance(input_shape, tuple):
             input_shape = torch.Size(input_shape)
+        max_layer_acitivation_workspace_size = 0
         
-        max_output_even_size = 0
-        max_output_odd_size = 0
-        
-        size_division_because_quant = 1
+        data_per_byte = 1
         
         scheme = None
         if self.is_quantized:
@@ -839,34 +838,19 @@ class Sequential(nn.Sequential):
 
             if scheme == QuantizationScheme.STATIC:
                 bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
-                size_division_because_quant = (8 // bitwidth)
+                data_per_byte = (8 // bitwidth)
 
         output_shape = input_shape
         # Track maximum tensor sizes at even/odd layers
         for i, layer in enumerate(self.layers()):
             max_layer_shape, output_shape = layer.get_output_tensor_shape(torch.Size(input_shape))
             # Calculate bytes required (applying packing factor)
-            input_size = math.ceil(input_shape.numel() / size_division_because_quant)
-            max_layer_size = math.ceil(max_layer_shape.numel() / size_division_because_quant)
+            output_size = math.ceil(output_shape.numel() / data_per_byte)
+            max_layer_size = math.ceil(max_layer_shape.numel() / data_per_byte)
 
-            # Ping-Pong Logic:
-            # Even layers (0, 2, 4...) write to Buffer B (Odd), read from Buffer A (Even)? 
-            # Actually, this logic calculates the PEAK requirement for the buffer 
-            # *currently holding the data* or *receiving the data*.
-            if (i % 2 == 0):
-                max_output_even_size = max(max_output_even_size, input_size, max_layer_size)
-            else:
-                max_output_odd_size = max(max_output_odd_size, input_size, max_layer_size)
+            max_layer_acitivation_workspace_size = max(max_layer_acitivation_workspace_size, output_size + max_layer_size)
         
-            input_shape = output_shape
-
-        # Handle the final output buffer
-        if len(self) % 2 == 0:
-            max_output_even_size = max(max_output_even_size, output_shape.numel())
-        else:
-            max_output_odd_size = max(max_output_odd_size, output_shape.numel())
-        
-        return max_output_even_size, max_output_odd_size
+        return max_layer_acitivation_workspace_size
 
 
     @torch.no_grad()
@@ -921,27 +905,44 @@ class Sequential(nn.Sequential):
         param_definition_file = f"#include \"{var_name}.h\"\n\n"
     
         # Calculate workspace requirements
-        max_output_even_size, max_output_odd_size = self.get_max_workspace_arena(input_shape)
+        max_layer_acitivation_workspace_size = self.get_min_workspace_arena(input_shape)
+        # max_output_even_size, max_output_odd_size = self.get_max_workspace_arena(input_shape)
         
         scheme = None
         if self.is_quantized:
             scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
         
 
+        # if scheme != QuantizationScheme.STATIC:
+        #     workspace_header = (
+        #         f"#define MAX_OUTPUT_EVEN_SIZE {max_output_even_size}\n"
+        #         f"#define MAX_OUTPUT_ODD_SIZE {max_output_odd_size}\n"
+        #         f"extern float workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
+        #     )
+        #     workspace_def = f"float workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
+        # else:
+        #     workspace_header = (
+        #         f"#define MAX_OUTPUT_EVEN_SIZE {max_output_even_size}\n"
+        #         f"#define MAX_OUTPUT_ODD_SIZE {max_output_odd_size}\n"
+        #         f"extern int8_t workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
+        #     )
+        #     workspace_def = f"int8_t workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
+
+
+
         if scheme != QuantizationScheme.STATIC:
             workspace_header = (
-                f"#define MAX_OUTPUT_EVEN_SIZE {max_output_even_size}\n"
-                f"#define MAX_OUTPUT_ODD_SIZE {max_output_odd_size}\n"
-                f"extern float workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
+                f"#define WORKSPACE_SIZE {max_layer_acitivation_workspace_size}\n"
+                f"extern float workspace[WORKSPACE_SIZE];\n\n"
             )
-            workspace_def = f"float workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
+            workspace_def = f"float workspace[WORKSPACE_SIZE];\n\n"
         else:
             workspace_header = (
-                f"#define MAX_OUTPUT_EVEN_SIZE {max_output_even_size}\n"
-                f"#define MAX_OUTPUT_ODD_SIZE {max_output_odd_size}\n"
-                f"extern int8_t workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
+                f"#define WORKSPACE_SIZE {max_layer_acitivation_workspace_size}\n"
+                f"extern int8_t workspace[WORKSPACE_SIZE];\n\n"
             )
-            workspace_def = f"int8_t workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
+            workspace_def = f"int8_t workspace[WORKSPACE_SIZE];\n\n"
+
 
         header_file += workspace_header
         definition_file += workspace_def
@@ -953,7 +954,7 @@ class Sequential(nn.Sequential):
             f"extern Sequential {var_name};\n\n"
         )
         layers_def = (
-            f"{self.__class__.__name__} {var_name}(layers, LAYERS_LEN, workspace, MAX_OUTPUT_EVEN_SIZE);\n"
+            f"{self.__class__.__name__} {var_name}(layers, LAYERS_LEN, workspace, WORKSPACE_SIZE);\n"
             f"\nLayer* layers[LAYERS_LEN] = {{\n"
         )
         

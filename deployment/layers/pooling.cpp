@@ -44,7 +44,10 @@ MaxPool2d::MaxPool2d(uint16_t input_channel_size, uint16_t input_row_size,
  * Performs 2D max pooling operation with the specified kernel size and stride.
  * The input is assumed to be in CHW (channels, height, width) format.
  */
-void MaxPool2d::forward(float* input, float* output) {
+float* MaxPool2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - (this->input_channel_size * this->output_row_size * this->output_col_size) : workspace_start;
+
     float temp, input_val;
 
     // Loop over all channels
@@ -79,6 +82,8 @@ void MaxPool2d::forward(float* input, float* output) {
             }
         }
     }
+    
+    return output;
 }
 
 
@@ -99,7 +104,10 @@ AvgPool2d::AvgPool2d(uint16_t input_channel_size, uint16_t input_row_size,
     this->output_col_size = ((this->input_col_size - this->kernel_size) / this->stride) + 1;
 }
 
-void AvgPool2d::forward(float* input, float* output) {
+float* AvgPool2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - (this->input_channel_size * this->output_row_size * this->output_col_size) : workspace_start;
+
     float total;
     uint8_t pool_size = this->kernel_size * this->kernel_size;
 
@@ -131,6 +139,8 @@ void AvgPool2d::forward(float* input, float* output) {
             }
         }
     }
+
+    return output;
 }
 
 
@@ -152,7 +162,10 @@ MaxPool2d::MaxPool2d(uint16_t input_channel_size, uint16_t input_row_size,
     this->output_col_size = ((this->input_col_size - this->kernel_size) / this->stride) + 1;
 }
 
-void MaxPool2d::forward(int8_t* input, int8_t* output) {
+int8_t* MaxPool2d::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil((this->input_channel_size * this->output_row_size * this->output_col_size) / DATA_PER_BYTE) : workspace_start;
+
     int8_t temp, input_val;
 
     // Loop over all channels
@@ -192,6 +205,8 @@ void MaxPool2d::forward(int8_t* input, int8_t* output) {
             }
         }
     }
+
+    return output;
 }
 
 
@@ -212,7 +227,10 @@ AvgPool2d::AvgPool2d(uint16_t input_channel_size, uint16_t input_row_size,
     this->output_col_size = ((this->input_col_size - this->kernel_size) / this->stride) + 1;
 }
 
-void AvgPool2d::forward(int8_t* input, int8_t* output) {
+int8_t* AvgPool2d::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - ceil((this->input_channel_size * this->output_row_size * this->output_col_size) / DATA_PER_BYTE) : workspace_start;
+
     int16_t total;
 
     uint8_t pool_size = this->kernel_size * this->kernel_size;
@@ -247,6 +265,8 @@ void AvgPool2d::forward(int8_t* input, int8_t* output) {
             }
         }
     }
+
+    return output;
 }
 
 

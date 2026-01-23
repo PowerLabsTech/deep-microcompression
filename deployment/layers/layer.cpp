@@ -9,8 +9,9 @@
 
 #if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME != STATIC
 
-void Layer::forward(float* input, float* output) {
+float* Layer::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Intentionally empty - to be implemented by derived classes
+    return nullptr;
 }
 
 
@@ -24,8 +25,9 @@ void Layer::forward(float* input, float* output) {
  * @note This base implementation does nothing and should be overridden
  *       by derived layer classes.
  */
-void Layer::forward(int8_t* input, int8_t* output) {
+int8_t* Layer::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Intentionally empty - to be implemented by derived classes
+    return nullptr;
 }
 
 
