@@ -136,7 +136,7 @@ Linear::Linear(uint16_t output_size, uint16_t input_size, const int8_t* weight, 
  */
 int8_t* Linear::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(this->output_size / DATA_PER_BYTE) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->output_size / DATA_PER_BYTE) : workspace_start;
 
     int32_t output_temp;
 

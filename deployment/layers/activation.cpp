@@ -70,7 +70,7 @@ ReLU::ReLU(uint32_t input_size, int8_t input_zero_point) {
 
 int8_t* ReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-        int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(this->input_size / DATA_PER_BYTE) : workspace_start;
+        int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / DATA_PER_BYTE) : workspace_start;
 
     // Apply quantized ReLU function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
@@ -90,7 +90,7 @@ ReLU6::ReLU6(uint32_t input_size, int8_t input_zero_point, int8_t input_six_poin
 
 int8_t* ReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-        int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(this->input_size / DATA_PER_BYTE) : workspace_start;
+        int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / DATA_PER_BYTE) : workspace_start;
 
     // Apply quantized ReLU6 function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {

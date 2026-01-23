@@ -278,7 +278,7 @@ Conv2d::Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t in
 int8_t* Conv2d::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
     int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(
-        (this->output_channel_size * this->output_row_size * this->output_col_size) / DATA_PER_BYTE
+        (float)(this->output_channel_size * this->output_row_size * this->output_col_size) / DATA_PER_BYTE
     ) : workspace_start;
 
 
