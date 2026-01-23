@@ -844,7 +844,7 @@ class Sequential(nn.Sequential):
         output_shape = input_shape
         # Track maximum tensor sizes at even/odd layers
         for i, layer in enumerate(self.layers()):
-            max_layer_shape, output_shape = layer.get_output_tensor_shape(torch.Size(input_shape))
+            max_layer_shape, output_shape = layer.get_output_tensor_shape(torch.Size(output_shape))
             # Calculate bytes required (applying packing factor)
             output_size = math.ceil(output_shape.numel() / data_per_byte)
             max_layer_size = math.ceil(max_layer_shape.numel() / data_per_byte)
