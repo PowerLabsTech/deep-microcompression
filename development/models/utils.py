@@ -156,7 +156,8 @@ def get_nas_compression_data(
             if valid:
                 compressed_model = model.init_compress(
                     config=compression_config_decode,
-                    input_shape=input_shape, calibration_data=calibration_data
+                    input_shape=input_shape, calibration_data=calibration_data,
+                    device=device
                 )
 
                 valid = filter(compressed_model, compression_config_decode)

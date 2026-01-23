@@ -393,7 +393,8 @@ class Sequential(nn.Sequential):
         self,
         config: Dict,
         input_shape: Tuple,
-        calibration_data: Optional[torch.Tensor] = None
+        calibration_data: Optional[torch.Tensor] = None,
+        device:Union[str, torch.device] = torch.device("cpu")
     ) -> "Sequential":
         """
         Initializes the Deep Microcompression (DMC) Pipeline.
@@ -425,7 +426,7 @@ class Sequential(nn.Sequential):
         if not self.is_compression_config_valid(config):
             raise ValueError("Invalid compression configuration!")
         
-        model = copy.deepcopy(self)
+        model = copy.deepcopy(self).to(device=device)
         model.__dict__["_dmc"]["compression_config"] = config 
         model.__dict__["_dmc"]["input_shape"] = input_shape 
               
@@ -616,9 +617,9 @@ class Sequential(nn.Sequential):
         Defines the valid search space for Quantization.
         """
         return {
-            "scheme" : [QuantizationScheme.NONE, QuantizationScheme.DYNAMIC, QuantizationScheme.STATIC],
-            "granularity": [None, QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
-            "bitwidth" : [None, 2, 4, 8]
+            "scheme" : [QuantizationScheme.DYNAMIC, QuantizationScheme.STATIC],
+            "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
+            "bitwidth" : [2, 4, 8]
         }
     
 
@@ -706,7 +707,7 @@ class Sequential(nn.Sequential):
         self.train() # Ensure observers are updating
         if scheme == QuantizationScheme.STATIC:
             assert calibration_data is not None, f"Pass a calibration data when doing static quantization"
-            self.to(calibration_data.device)
+            # self.to(calibration_data.device)
             self(calibration_data)
 
         return
