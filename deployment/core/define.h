@@ -98,6 +98,7 @@ inline int8_t relu6_zero_point(int8_t val, int8_t zp, int8_t sp) {
     // 8-BIT (Standard)
     // ------------------------------------------------------------------------
     // To clamp to int8 range after operations
+    #define DATA_PER_BYTE 1
     #define clampb(x) (((x) < -128) ? -128 : ((x) > 127) ? 127 : (x))
 
     // Direct Access
@@ -110,6 +111,7 @@ inline int8_t relu6_zero_point(int8_t val, int8_t zp, int8_t sp) {
     // 4-BIT (2 weights per byte)
     // ------------------------------------------------------------------------
     // To clamp to int4 range after operations
+    #define DATA_PER_BYTE 2
     #define clampb(x) (((x) < -8) ? -8 : ((x) > 7) ? 7 : (x))
 
     // x / 2 is replaced by x >> 1
@@ -156,6 +158,7 @@ inline int8_t relu6_zero_point(int8_t val, int8_t zp, int8_t sp) {
     // 2-BIT (4 weights per byte)
     // ------------------------------------------------------------------------
     // To clamp to int2 range after operations
+    #define DATA_PER_BYTE 4
     #define clampb(x) (((x) < -2) ? -2 : ((x) > 1) ? 1 : (x))
 
     // x / 4 is replaced by x >> 2

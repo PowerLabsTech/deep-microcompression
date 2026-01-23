@@ -34,7 +34,10 @@ Linear::Linear(uint16_t output_size, uint16_t input_size,
  * 
  * Computes: output = input * weight^T + bias
  */
-void Linear::forward(float* input, float* output) {
+float* Linear::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
+
     float output_temp;
     for (uint16_t j = 0; j < this->output_size; j++) {
         output_temp = this->bias ? par_read_float(this->bias, j) : 0;
@@ -44,6 +47,8 @@ void Linear::forward(float* input, float* output) {
         }
         act_write_float(output, j, output_temp);
     }
+
+    return output;
 }
 
 
@@ -77,7 +82,10 @@ Linear::Linear(uint16_t output_size, uint16_t input_size,
  * 
  * Computes: output = input * dequant(weight)^T + bias
  */
-void Linear::forward(float* input, float* output) {
+float* Linear::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->output_size : workspace_start;
+
     float output_temp;
 
     for (uint16_t j = 0; j < this->output_size; j++) {
@@ -92,6 +100,7 @@ void Linear::forward(float* input, float* output) {
             (output_temp * this->weight_scale))
         );
     }
+    return output;
 }
 
 #endif // QUANTIZATION_GRANULARITY
@@ -125,7 +134,10 @@ Linear::Linear(uint16_t output_size, uint16_t input_size, const int8_t* weight, 
  * 
  * Computes quantized output with proper scaling and zero-point adjustments
  */
-void Linear::forward(int8_t* input, int8_t* output) {
+int8_t* Linear::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->output_size / DATA_PER_BYTE) : workspace_start;
+
     int32_t output_temp;
 
     for (uint16_t j = 0; j < this->output_size; j++) {
@@ -143,6 +155,7 @@ void Linear::forward(int8_t* input, int8_t* output) {
         
         act_write_packed_intb(output, j, output_temp);
     }
+    return output;
 }
 #endif // QUANTIZATION_GRANULARITY
 

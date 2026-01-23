@@ -53,7 +53,12 @@ Conv2d::Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t in
  * @param input Input tensor (float)
  * @param output Output tensor (float)
  */
-void Conv2d::forward(float* input, float* output) {
+float* Conv2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size 
+    ) : workspace_start;
+
     float output_temp;
 
     // Handle Grouped Convolution (e.g., Depthwise)
@@ -109,6 +114,7 @@ void Conv2d::forward(float* input, float* output) {
             }
         }
     }
+    return output;
 }
 
 
@@ -160,7 +166,12 @@ Conv2d::Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t in
  * @param input Input tensor (float)
  * @param output Output tensor (float)
  */
-void Conv2d::forward(float* input, float* output) {
+float* Conv2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    float* output = input == workspace_start ? workspace_start + workspace_size - (
+        this->output_channel_size * this->output_row_size * this->output_col_size 
+    ) : workspace_start;
+
     // uint32_t output_index;
     float output_temp;
 
@@ -216,6 +227,7 @@ void Conv2d::forward(float* input, float* output) {
             }
         }
     }
+    return output;
 }
 
 #endif // QUANTIZATION_GRANULARITY
@@ -263,7 +275,12 @@ Conv2d::Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t in
  * @param input Input tensor (int8_t)
  * @param output Output tensor (int8_t)
  */
-void Conv2d::forward(int8_t* input, int8_t* output) {
+int8_t* Conv2d::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+    // Getting the output start address with the input size as offset
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(
+        (float)(this->output_channel_size * this->output_row_size * this->output_col_size) / DATA_PER_BYTE
+    ) : workspace_start;
+
 
     uint16_t input_channel_per_group = this->input_channel_size / this->groups;
     uint16_t output_channel_per_group = this->output_channel_size / this->groups;
@@ -322,6 +339,7 @@ void Conv2d::forward(int8_t* input, int8_t* output) {
             }
         }
     }
+    return output;
 }
 #endif // QUANTIZATION_GRANULARITY
 
