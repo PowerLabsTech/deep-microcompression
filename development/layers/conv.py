@@ -466,39 +466,21 @@ class Conv2d(Layer, nn.Conv2d):
                 raise QuantizationBitWidthError
 
             if self.bias is not None:
-                if granularity == QuantizationGranularity.PER_TENSOR:
-                    layer_def = (
-                        f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
-                        f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                        f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                        "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
-                        f"(int8_t*){var_name}_weight, (float*){var_name}_bias,  (float*){var_name}_weight_scale, {quantize_property});\n"
-                    )  
-                else:        
-                    layer_def = (
-                        f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
-                        f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                        f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                        "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
-                        f"(int8_t*){var_name}_weight, (float*){var_name}_bias,  (float*){var_name}_weight_scale, {quantize_property});\n"
-                    )
-            else:
-                if granularity == QuantizationGranularity.PER_TENSOR:
-                    layer_def = (
-                        f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
-                        f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                        f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                        "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
-                        f"(int8_t*){var_name}_weight, nullptr,  (float*){var_name}_weight_scale, {quantize_property});\n"
-                    )  
-                else:        
-                    layer_def = (
-                        f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
-                        f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                        f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                        "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
-                        f"(int8_t*){var_name}_weight, nullptr,  (float*){var_name}_weight_scale, {quantize_property});\n"
-                    )
+                layer_def = (
+                    f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
+                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
+                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"(int8_t*){var_name}_weight, (float*){var_name}_bias,  (float*){var_name}_weight_scale, {quantize_property});\n"
+                )
+            else:     
+                layer_def = (
+                    f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
+                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
+                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"(int8_t*){var_name}_weight, nullptr,  (float*){var_name}_weight_scale, {quantize_property});\n"
+                )
             layer_header += f"extern {self.__class__.__name__}_DQ {var_name};\n\n"
                 
                 
@@ -548,47 +530,25 @@ class Conv2d(Layer, nn.Conv2d):
                 raise QuantizationBitWidthError
             
             if self.bias is not None:
-                if granularity == QuantizationGranularity.PER_TENSOR:
-                    layer_def = (
-                        f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
-                        f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                        f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                        "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
-                        f"(int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
-                        f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                        f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
-                    )
-                else:
-                    layer_def = (
-                        f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
-                        f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                        f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                        "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
-                        f"(int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
-                        f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                        f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
-                    )
+                layer_def = (
+                    f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
+                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
+                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"(int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
+                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
+                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
+                )
             else:
-                if granularity == QuantizationGranularity.PER_TENSOR:
-                    layer_def = (
-                        f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
-                        f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                        f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                        "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
-                        f"(int8_t*){var_name}_weight, nullptr, "
-                        f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                        f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
-                    )
-                else:
-                    layer_def = (
-                        f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
-                        f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                        f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                        "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
-                        f"(int8_t*){var_name}_weight, nullptr, "
-                        f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                        f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
-                    )
+                layer_def = (
+                    f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
+                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
+                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"(int8_t*){var_name}_weight, nullptr, "
+                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
+                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
+                )
             layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
 
             param_header, param_def = convert_tensor_to_bytes_var(

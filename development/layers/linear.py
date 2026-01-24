@@ -402,17 +402,10 @@ class Linear(Layer, nn.Linear):
                 raise QuantizationBitWidthError
 
             if self.bias is not None:
-                if granularity == QuantizationGranularity.PER_TENSOR:
-                    layer_def = f"{self.__class__.__name__}_DQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, (float*){var_name}_bias, (float*){var_name}_weight_scale, {quantize_property});\n"   
-                else:
-                    layer_def = f"{self.__class__.__name__}_DQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, (float*){var_name}_bias, (float*){var_name}_weight_scale, {quantize_property});\n"
+                layer_def = f"{self.__class__.__name__}_DQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, (float*){var_name}_bias, (float*){var_name}_weight_scale, {quantize_property});\n"
             else:
-                if granularity == QuantizationGranularity.PER_TENSOR:
-                    layer_def = f"{self.__class__.__name__}_DQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, nullptr, (float*){var_name}_weight_scale, {quantize_property});\n"   
-                else:
-                    layer_def = f"{self.__class__.__name__}_DQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, nullptr, (float*){var_name}_weight_scale, {quantize_property});\n"
+                layer_def = f"{self.__class__.__name__}_DQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, nullptr, (float*){var_name}_weight_scale, {quantize_property});\n"
             layer_header += f"extern {self.__class__.__name__}_DQ {var_name};\n\n"
-
 
             param_header, param_def = convert_tensor_to_bytes_var(
                                         self.weight_quantize.scale,
@@ -461,31 +454,17 @@ class Linear(Layer, nn.Linear):
                 raise QuantizationBitWidthError
 
             if self.bias is not None:
-                if granularity == QuantizationGranularity.PER_TENSOR:
-                    layer_def = (
-                        f"{self.__class__.__name__}_SQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
-                        f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, *(int8_t*){var_name}_input_zero_point, "
-                        f"(float*){var_name}_bias_scale, {quantize_property});\n"
-                    ) 
-                else:
-                    layer_def = (
-                        f"{self.__class__.__name__}_SQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
-                        f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, *(int8_t*){var_name}_input_zero_point, "
-                        f"(float*){var_name}_bias_scale, {quantize_property});\n"
-                    )
+                layer_def = (
+                    f"{self.__class__.__name__}_SQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
+                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, *(int8_t*){var_name}_input_zero_point, "
+                    f"(float*){var_name}_bias_scale, {quantize_property});\n"
+                )
             else:
-                if granularity == QuantizationGranularity.PER_TENSOR:
-                    layer_def = (
-                        f"{self.__class__.__name__}_SQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, nullptr, "
-                        f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, *(int8_t*){var_name}_input_zero_point, "
-                        f"(float*){var_name}_bias_scale, {quantize_property});\n"
-                    ) 
-                else:
-                    layer_def = (
-                        f"{self.__class__.__name__}_SQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, nullptr, "
-                        f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, *(int8_t*){var_name}_input_zero_point, "
-                        f"(float*){var_name}_bias_scale, {quantize_property});\n"
-                    )
+                layer_def = (
+                    f"{self.__class__.__name__}_SQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, nullptr, "
+                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, *(int8_t*){var_name}_input_zero_point, "
+                    f"(float*){var_name}_bias_scale, {quantize_property});\n"
+                )
             layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
 
             param_header, param_def = convert_tensor_to_bytes_var(
