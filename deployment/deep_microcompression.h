@@ -29,6 +29,7 @@
 #include "layers/flatten.h"
 #include "layers/fused_layers.h"
 #include "layers/linear.h"
+#include "layers/padding.h"
 #include "layers/pooling.h"
 
 #endif // DEEP_MICROCOMPRESSION

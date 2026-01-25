@@ -49,11 +49,6 @@ float* Conv2dReLU::forward(float* input, float* workspace_start, uint32_t worksp
 
     uint16_t n, k;
 
-    uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
-    uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
-
-    pad_input(input, this->padding, input_channel_size, input_row_size, input_col_size, padded_row_size, padded_col_size);
-
     for (uint8_t g = 0; g < this->groups; g++){
         // Output channel loop
         for (uint16_t c_out = 0; c_out < output_channel_per_group; c_out++) {
@@ -71,8 +66,8 @@ float* Conv2dReLU::forward(float* input, float* workspace_start, uint32_t worksp
                                 // Convolution operation
                                 output_temp += activation_read_float(
                                     input, 
-                                    (k * padded_row_size * padded_col_size) +
-                                    ((j + m * this->stride_row) * padded_col_size) + 
+                                    (k * this->input_row_size * this->input_col_size) +
+                                    ((j + m * this->stride_row) * this->input_col_size) + 
                                     (i + l * this->stride_col)
                                 ) * parameter_read_float(
                                     this->weight, 
@@ -112,11 +107,6 @@ float* Conv2dReLU6::forward(float* input, float* workspace_start, uint32_t works
 
     uint16_t n, k;
 
-    uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
-    uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
-
-    pad_input(input, this->padding, input_channel_size, input_row_size, input_col_size, padded_row_size, padded_col_size);
-
     for (uint8_t g = 0; g < this->groups; g++){
         // Output channel loop
         for (uint16_t c_out = 0; c_out < output_channel_per_group; c_out++) {
@@ -134,8 +124,8 @@ float* Conv2dReLU6::forward(float* input, float* workspace_start, uint32_t works
                                 // Convolution operation
                                 output_temp += activation_read_float(
                                     input, 
-                                    (k * padded_row_size * padded_col_size) +
-                                    ((j + m * this->stride_row) * padded_col_size) + 
+                                    (k * this->input_row_size * this->input_col_size) +
+                                    ((j + m * this->stride_row) * this->input_col_size) + 
                                     (i + l * this->stride_col)
                                 ) * parameter_read_float(
                                     this->weight, 
@@ -238,11 +228,6 @@ float* Conv2dReLU_DQ::forward(float* input, float* workspace_start, uint32_t wor
 
     uint16_t n, k;
 
-    uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
-    uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
-
-    pad_input(input, this->padding, input_channel_size, input_row_size, input_col_size, padded_row_size, padded_col_size);
-
     for (uint8_t g = 0; g < this->groups; g++){
         // Output channel loop
         for (uint16_t c_out = 0; c_out < output_channel_per_group; c_out++) {
@@ -261,8 +246,8 @@ float* Conv2dReLU_DQ::forward(float* input, float* workspace_start, uint32_t wor
                                 // Convolution operation
                                 output_temp += activation_read_float(
                                     input, 
-                                    (k * padded_row_size * padded_col_size) +
-                                    ((j + m * this->stride_row) * padded_col_size) + 
+                                    (k * this->input_row_size * this->input_col_size) +
+                                    ((j + m * this->stride_row) * this->input_col_size) + 
                                     (i + l * this->stride_col)
                                 ) * 
                                 parameter_read_packed_intb(
@@ -312,11 +297,6 @@ float* Conv2dReLU6_DQ::forward(float* input, float* workspace_start, uint32_t wo
 
     uint16_t n, k;
 
-    uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
-    uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
-
-    pad_input(input, this->padding, input_channel_size, input_row_size, input_col_size, padded_row_size, padded_col_size);
-
     for (uint8_t g = 0; g < this->groups; g++){
         // Output channel loop
         for (uint16_t c_out = 0; c_out < output_channel_per_group; c_out++) {
@@ -335,8 +315,8 @@ float* Conv2dReLU6_DQ::forward(float* input, float* workspace_start, uint32_t wo
                                 // Convolution operation
                                 output_temp += activation_read_float(
                                     input, 
-                                    (k * padded_row_size * padded_col_size) +
-                                    ((j + m * this->stride_row) * padded_col_size) + 
+                                    (k * this->input_row_size * this->input_col_size) +
+                                    ((j + m * this->stride_row) * this->input_col_size) + 
                                     (i + l * this->stride_col)
                                 ) * 
                                 parameter_read_packed_intb(
@@ -472,11 +452,6 @@ int8_t* Conv2dReLU_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t 
 
     uint16_t n, k;
 
-    uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
-    uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
-
-    pad_input(input, this->input_zero_point, this->padding, input_channel_size, input_row_size, input_col_size, padded_row_size, padded_col_size, this->quantize_property);
-
     for (uint8_t g = 0; g < this->groups; g++){
         // Output channel loop
         for (uint16_t c_out = 0; c_out < output_channel_per_group; c_out++) {
@@ -495,8 +470,8 @@ int8_t* Conv2dReLU_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t 
 
                                 output_temp += ((int32_t)activation_read_packed_intb(
                                     input,
-                                    (k * padded_row_size * padded_col_size) +
-                                    ((j + m * this->stride_row) * padded_col_size) + 
+                                    (k * this->input_row_size * this->input_col_size) +
+                                    ((j + m * this->stride_row) * this->input_col_size) + 
                                     (i + l * this->stride_col)) - this->input_zero_point) *
                                     parameter_read_packed_intb(
                                         this->weight,
@@ -558,11 +533,6 @@ int8_t* Conv2dReLU6_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t
 
     uint16_t n, k;
 
-    uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
-    uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
-
-    pad_input(input, this->input_zero_point, this->padding, input_channel_size, input_row_size, input_col_size, padded_row_size, padded_col_size, this->quantize_property);
-
     for (uint8_t g = 0; g < this->groups; g++){
         // Output channel loop
         for (uint16_t c_out = 0; c_out < output_channel_per_group; c_out++) {
@@ -580,8 +550,8 @@ int8_t* Conv2dReLU6_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t
                                                          
                                 output_temp += ((int32_t)activation_read_packed_intb(
                                     input,
-                                    (k * padded_row_size * padded_col_size) +
-                                    ((j + m * this->stride_row) * padded_col_size) + 
+                                    (k * this->input_row_size * this->input_col_size) +
+                                    ((j + m * this->stride_row) * this->input_col_size) + 
                                     (i + l * this->stride_col)) - this->input_zero_point) *
                                     parameter_read_packed_intb(
                                         this->weight,

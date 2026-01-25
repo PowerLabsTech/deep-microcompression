@@ -124,8 +124,6 @@ class Conv2dReLU(Conv2d):
                 if self.bias is not None and hasattr(self, "bias_quantize"):
                     bias = self.bias_quantize(bias)
                     
-        
-        input =  nn.functional.pad(input, self.pad, "constant", 0) 
         input = nn.functional.conv2d(
             input, weight, bias,
             self.stride, self.padding,
@@ -164,9 +162,7 @@ class Conv2dReLU6(Conv2d):
                 weight = self.weight_quantize(weight)
                 if self.bias is not None and hasattr(self, "bias_quantize"):
                     bias = self.bias_quantize(bias)
-                    
-        
-        input =  nn.functional.pad(input, self.pad, "constant", 0) 
+                            
         input = nn.functional.conv2d(
             input, weight, bias,
             self.stride, self.padding,

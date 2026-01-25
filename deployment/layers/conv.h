@@ -21,7 +21,6 @@
 #define CONV_H
 
 #include "layer.h"
-#include "pad.h"
 
 
 /**
@@ -46,7 +45,6 @@ protected:
     // Operation parameters
     uint8_t stride_row;         ///< Vertical stride
     uint8_t stride_col;         ///< Horizontal stride
-    Padding_t  padding;            ///< Padding type (0=VALID, 1=SAME)
     uint8_t groups;
 
     // Weight and bias tensors
@@ -64,13 +62,12 @@ public:
      * @param kernel_col_size Kernel width
      * @param stride_row Vertical stride
      * @param stride_col Horizontal stride
-     * @param padding Padding type (0=VALID, 1=SAME)
      * @param weight Pointer to weight tensor
      * @param bias Pointer to bias tensor
      */
     Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
            uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
-           uint8_t stride_row, uint8_t stride_col, Padding_t padding, uint8_t groups,
+           uint8_t stride_row, uint8_t stride_col, uint8_t groups,
            const float* weight, const float* bias);
     
     /**
@@ -106,7 +103,6 @@ protected:
     // Operation parameters
     uint8_t stride_row;         ///< Vertical stride
     uint8_t stride_col;         ///< Horizontal stride
-    Padding_t padding;            ///< Padding type (0=VALID, 1=SAME)
     uint8_t groups;
 
     // Quantization parameters
@@ -124,7 +120,7 @@ public:
      */
     Conv2d_DQ(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
            uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
-           uint8_t stride_row, uint8_t stride_col, Padding_t padding, uint8_t groups,
+           uint8_t stride_row, uint8_t stride_col, uint8_t groups,
            const int8_t* weight, const float* bias, const float* weight_scale, uint8_t quantize_property);
 
     /**
@@ -155,7 +151,6 @@ protected:
     // Operation parameters
     uint8_t stride_row;         ///< Vertical stride
     uint8_t stride_col;         ///< Horizontal stride
-    Padding_t padding;            ///< Padding type (0=VALID, 1=SAME)
     uint8_t groups;
 
     // Weight and bias tensors
@@ -172,7 +167,7 @@ protected:
 public:
     Conv2d_SQ(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
            uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
-           uint8_t stride_row, uint8_t stride_col, Padding_t padding, uint8_t groups,
+           uint8_t stride_row, uint8_t stride_col, uint8_t groups,
            const int8_t* weight, const int32_t* bias, float output_scale, 
            int8_t output_zero_point, int8_t input_zero_point,  float* bias_scale, uint8_t quantize_property);
 

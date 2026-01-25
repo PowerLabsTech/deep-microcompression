@@ -57,14 +57,12 @@ class Conv2d(Layer, nn.Conv2d):
     def __init__(self, *args, **kwargs):
         """Initialize Conv2d layer with standard PyTorch parameters"""
         # Extract custom padding logic (Left, Right, Top, Bottom)
-        self.pad = kwargs.pop("pad", (0, 0, 0, 0))
-        assert len(self.pad) == 4, f"pad {self.pad} is invalid, pad should be of (pad_left, pad_right, pad_top, pad_bottom)"
-        
+ 
         groups = kwargs.get("groups", 1)
 
         # Enforce usage of explicit pad instead of built-in padding arg
         if "padding" in kwargs:
-            assert kwargs["padding"] == 0, "Use pad instead of padding to pad input"
+            assert kwargs["padding"] == 0, "Use padding module instead of padding to pad input"
         else:
             kwargs["padding"] = 0
 
@@ -107,7 +105,6 @@ class Conv2d(Layer, nn.Conv2d):
                     bias = self.bias_quantize(bias)
 
         # Apply explicit padding
-        input =  nn.functional.pad(input, self.pad, "constant", 0) 
         output = nn.functional.conv2d(
             input, weight, bias,
             self.stride, self.padding,
@@ -349,9 +346,7 @@ class Conv2d(Layer, nn.Conv2d):
             
         sH, sW = _pair(self.stride)
         dH, dW = _pair(self.dilation)
-
-        pW = self.pad[0] + self.pad[1]
-        pH = self.pad[2] + self.pad[3]
+        pH, pW = _pair(self.padding)
         
         H_out = ((H_in +  pH - dH * (kH - 1) - 1) // sH) + 1
         W_out = ((W_in +  pW - dW * (kW - 1) - 1) // sW) + 1
@@ -383,7 +378,6 @@ class Conv2d(Layer, nn.Conv2d):
         output_channel_size, _,\
         kernel_row_size, kernel_col_size = weight.size()
         stride_row, stride_col = self.stride
-        pad = self.pad
 
         if self.groups == self.out_channels:
             groups = input_channel_size
@@ -426,16 +420,14 @@ class Conv2d(Layer, nn.Conv2d):
                 layer_def = (
                     f"{self.__class__.__name__} {var_name}({input_channel_size}, "
                     f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
                     f"(float*){var_name}_weight, (float*){var_name}_bias);\n"
                 )
             else:
                 layer_def = (
                     f"{self.__class__.__name__} {var_name}({input_channel_size}, "
                     f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
                     f"(float*){var_name}_weight, nullptr);\n"
                 )
             layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
@@ -469,16 +461,14 @@ class Conv2d(Layer, nn.Conv2d):
                 layer_def = (
                     f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
                     f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
                     f"(int8_t*){var_name}_weight, (float*){var_name}_bias,  (float*){var_name}_weight_scale, {quantize_property});\n"
                 )
             else:     
                 layer_def = (
                     f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
                     f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
                     f"(int8_t*){var_name}_weight, nullptr,  (float*){var_name}_weight_scale, {quantize_property});\n"
                 )
             layer_header += f"extern {self.__class__.__name__}_DQ {var_name};\n\n"
@@ -533,8 +523,7 @@ class Conv2d(Layer, nn.Conv2d):
                 layer_def = (
                     f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
                     f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
                     f"(int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
                     f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
                     f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
@@ -543,8 +532,7 @@ class Conv2d(Layer, nn.Conv2d):
                 layer_def = (
                     f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
                     f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, "
-                    "{" f"{pad[0]}, {pad[1]}, {pad[2]}, {pad[3]}" "}, " f"{groups}, "
+                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
                     f"(int8_t*){var_name}_weight, nullptr, "
                     f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
                     f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"

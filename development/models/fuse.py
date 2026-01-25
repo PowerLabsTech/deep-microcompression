@@ -92,7 +92,6 @@ def fuse_conv2d_batchnorm2d(conv2d, batchnorm2d):
         in_channels = conv2d.in_channels,
         kernel_size = conv2d.kernel_size,
         stride = conv2d.stride,
-        pad = conv2d.pad,
         groups = conv2d.groups,
         dilation = conv2d.dilation,
         bias = True
@@ -145,7 +144,6 @@ def fuse_conv2d_relu(conv2d, relu):
         in_channels = conv2d.in_channels,
         kernel_size = conv2d.kernel_size,
         stride = conv2d.stride,
-        pad = conv2d.pad,
         groups = conv2d.groups,
         dilation = conv2d.dilation,
         bias = conv2d.bias is not None
@@ -167,7 +165,6 @@ def fuse_conv2d_relu6(conv2d, relu6):
         in_channels = conv2d.in_channels,
         kernel_size = conv2d.kernel_size,
         stride = conv2d.stride,
-        pad = conv2d.pad,
         groups = conv2d.groups,
         dilation = conv2d.dilation,
         bias = conv2d.bias is not None

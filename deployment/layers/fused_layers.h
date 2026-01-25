@@ -4,7 +4,6 @@
 #include "layer.h"
 #include "conv.h"
 #include "linear.h"
-#include "pad.h"
 
 
 class LinearReLU: public Linear {
