@@ -150,8 +150,9 @@ class ConfigEncoder:
             categorical_keys:List[str] = [
                 "prune_channel.metric", 
                 "quantize.scheme", 
-                "quantize.granularity", 
-                "quantize.bitwidth"
+                "quantize.activation_bitwidth",
+                "quantize.parameter_bitwidth",
+                "quantize.granularity"
             ],
             dtype:torch.dtype=torch.float32
         ):
@@ -172,23 +173,23 @@ class ConfigEncoder:
         """
         # Normalize Integer Ranges, with the max value
         for key in self.search_space:
-            if key not in self.categorical_keys:
+            # removing the layer name
+            if key not in self.categorical_keys and ".".join(key.split(".")[:-1]) not in self.categorical_keys:
                 # Store the max value for normalization (e.g., 6, 16, 84)
                 self.encoders[key] = {"type": "nominal", "max": max(self.search_space[key])}
                 self.feature_dim += 1
-
-        for key in self.categorical_keys:
-            # Create a mapping from Value -> Index
-            # Handle 'None' explicitly by converting everything to string for consistency
-            unique_vals = list(self.search_space[key])
-            val_to_idx = {str(v): i for i, v in enumerate(unique_vals)}
-            
-            self.encoders[key] = {
-                "type": "categorical", 
-                "map": val_to_idx, 
-                "size": len(unique_vals)
-            }
-            self.feature_dim += len(unique_vals)
+            else:
+                # Create a mapping from Value -> Index
+                # Handle 'None' explicitly by converting everything to string for consistency
+                unique_vals = list(self.search_space[key])
+                val_to_idx = {str(v): i for i, v in enumerate(unique_vals)}
+                
+                self.encoders[key] = {
+                    "type": "categorical", 
+                    "map": val_to_idx, 
+                    "size": len(unique_vals)
+                }
+                self.feature_dim += len(unique_vals)
 
 
     def encode(self, config:Dict[str, Union[Any, Iterable]], with_metric:bool=False) -> torch.Tensor:
@@ -220,22 +221,22 @@ class ConfigEncoder:
         if length is None:
             # Encode integer type, normalized as float
             for key in self.search_space:
-                if key not in self.categorical_keys:
+                # removing the layer name
+                if key not in self.categorical_keys and ".".join(key.split(".")[:-1]) not in self.categorical_keys:
                     val = config.get(key)
                     max_val = self.encoders[key]['max']
                     vector.append(val / max_val if max_val > 0 else 0)
-
-            # Encode Categorical (One-Hot)
-            for key in self.categorical_keys:
-                enc_info = self.encoders[key]
-                val = str(config.get(key)) # Convert input to string to match key map
-                
-                # Create One-Hot Vector
-                one_hot = [0] * enc_info['size']
-                if val in enc_info['map']:
-                    idx = enc_info['map'][val]
-                    one_hot[idx] = 1
-                vector.extend(one_hot)
+                else:
+                    # Encode Categorical (One-Hot)
+                    enc_info = self.encoders[key]
+                    val = str(config.get(key)) # Convert input to string to match key map
+                    
+                    # Create One-Hot Vector
+                    one_hot = [0] * enc_info['size']
+                    if val in enc_info['map']:
+                        idx = enc_info['map'][val]
+                        one_hot[idx] = 1
+                    vector.extend(one_hot)
             # getting the metric
             if with_metric: vector.append(config.get("metric")[0])
         
@@ -244,22 +245,24 @@ class ConfigEncoder:
                 vector_i = []
                 # Encode integer type, normalized as float
                 for key in self.search_space:
-                    if key not in self.categorical_keys:
+                    # removing the layer name
+                    if key not in self.categorical_keys and ".".join(key.split(".")[:-1]) not in self.categorical_keys:
                         val = config.get(key)[i]
                         max_val = self.encoders[key]['max']
                         vector_i.append(val / max_val if max_val > 0 else 0)
 
-                # Encode Categorical (One-Hot)
-                for key in self.categorical_keys:
-                    enc_info = self.encoders[key]
-                    val = str(config.get(key)[i]) # Convert input to string to match key map
-                    
-                    # Create One-Hot Vector
-                    one_hot = [0] * enc_info['size']
-                    if val in enc_info['map']:
-                        idx = enc_info['map'][val]
-                        one_hot[idx] = 1
-                    vector_i.extend(one_hot)
+                    else:
+                        # Encode Categorical (One-Hot)
+                        enc_info = self.encoders[key]
+                        print(key, config.get(key))
+                        val = str(config.get(key)[i]) # Convert input to string to match key map
+                        
+                        # Create One-Hot Vector
+                        one_hot = [0] * enc_info['size']
+                        if val in enc_info['map']:
+                            idx = enc_info['map'][val]
+                            one_hot[idx] = 1
+                        vector_i.extend(one_hot)
                 # getting the metric
                 if with_metric: vector_i.append(config.get("metric")[0])
         
