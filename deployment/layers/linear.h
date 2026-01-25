@@ -12,9 +12,6 @@
 #include "layer.h"
 
 
-
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME == NONE
-
 /**
  * @class Linear
  * @brief Floating-point fully-connected layer
@@ -46,20 +43,19 @@ public:
 };
 
 
-#elif QUANTIZATION_SCHEME == DYNAMIC
-
 
 /**
  * @class Linear
  * @brief Dynamically quantized fully-connected layer (weights only)
  */
-class Linear : public Layer {
+class Linear_DQ : public Layer {
 protected:
     uint16_t input_size;      ///< Number of input features
     uint16_t output_size;     ///< Number of output neurons
     const int8_t* weight;     ///< Quantized weight matrix
     const float* bias;        ///< Floating-point bias vector (size: output_size)
-    float weight_scale;       ///< Scaling factor for weights
+    float* weight_scale;       ///< Scaling factor for weights
+    uint8_t quantize_property;
 
 public:
     /**
@@ -70,9 +66,9 @@ public:
      * @param weight_scale Scaling factor for weights
      * @param bias Pointer to bias vector
      */
-    Linear(uint16_t output_size, uint16_t input_size,
+    Linear_DQ(uint16_t output_size, uint16_t input_size,
           const int8_t* weight, const float* bias,
-          float weight_scale);
+          float* weight_scale, uint8_t quantize_property);
 
     /**
      * @brief Forward pass for dynamically quantized Linear layer
@@ -83,9 +79,8 @@ public:
 };
 
 
-#elif QUANTIZATION_SCHEME == STATIC
 
-class Linear : public Layer {
+class Linear_SQ : public Layer_SQ {
 protected:
     uint16_t input_size;      ///< Number of input features
     uint16_t output_size;     ///< Number of output neurons
@@ -94,18 +89,14 @@ protected:
     int8_t input_zero_point;  ///< Input tensor zero point
     const int8_t* weight;     ///< Quantized weight matrix
     const int32_t* bias;      ///< Quantized bias vector (size: output_size)
-    float bias_scale;         ///< Bias scaling factor
+    float* bias_scale;         ///< Bias scaling factor
 
 public:
-    Linear(uint16_t output_size, uint16_t input_size, const int8_t* weight, const int32_t* bias,
-          float output_scale, int8_t output_zero_point, int8_t input_zero_point,  float bias_scale);
+    Linear_SQ(uint16_t output_size, uint16_t input_size, const int8_t* weight, const int32_t* bias,
+          float output_scale, int8_t output_zero_point, int8_t input_zero_point,  float* bias_scale, uint8_t quantize_property);
 
     int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
 };
-
-
-
-#endif // QUANTIZATION_SCHEME
 
 
 #endif // LINEAR_H

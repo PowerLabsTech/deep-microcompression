@@ -8,8 +8,6 @@
 #include "flatten.h"
 
 
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME != STATIC
-
 /**
  * @brief Constructor for floating-point Flatten layer
  * @param input_size Number of elements in input tensor
@@ -34,30 +32,33 @@ float* Flatten::forward(float* input, float* workspace_start, uint32_t workspace
 
     // Perform element-wise copy (no transformation needed)
     for (uint32_t i = 0; i < this->input_size; i++) {
-        act_write_float(output, i, act_read_float(input, i));
+        activation_write_float(output, i, activation_read_float(input, i));
     }
 
     return output;
 }
 
 
-#else // QUANTIZATION_SCHEME
-
-
-Flatten::Flatten(uint32_t input_size) {
+Flatten_SQ::Flatten_SQ(uint32_t input_size, uint8_t quantize_property) {
     this->input_size = input_size;
+    this->quantize_property = quantize_property;
 }
 
-int8_t* Flatten::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+int8_t* Flatten_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / DATA_PER_BYTE) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
+
+    void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
+    int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
+    
+    
+    get_activation_write_packed_intb(this->quantize_property, &activation_write_packed_intb);
+    get_activation_read_packed_intb(this->quantize_property, &activation_read_packed_intb);
 
     // Perform element-wise copy (no transformation needed)
     for (uint32_t i = 0; i < this->input_size; i++) {
-        act_write_packed_intb(output, i, act_read_packed_intb(input, i));
+        activation_write_packed_intb(output, i, activation_read_packed_intb(input, i));
     }
 
     return output;
 }
-
-#endif // QUANTIZATION_SCHEME

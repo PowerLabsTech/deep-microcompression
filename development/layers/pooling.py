@@ -24,6 +24,12 @@ import torch
 from torch import nn
 
 from .layer import Layer
+from ..compressors import QuantizationScheme
+from ..utils import (
+    ACTIVATION_BITWIDTH_8,
+    ACTIVATION_BITWIDTH_4,
+    ACTIVATION_BITWIDTH_2
+)
 
 class MaxPool2d(Layer, nn.MaxPool2d):
     """
@@ -63,14 +69,23 @@ class MaxPool2d(Layer, nn.MaxPool2d):
     def get_prune_channel_possible_hyperparameters(self):
         return None
 
-    def init_quantize(self, bitwidth, scheme, granularity, previous_output_quantize = None):
+
+    def init_quantize(self, parameter_bitwidth, granularity, scheme, activation_bitwidth=None, previous_output_quantize = None):
         """
         Pass-through for Quantization Observers.
         
         Max Pooling does not alter the dynamic range of data, so the 
         input scale/zero-point is valid for the output.
         """
+        
+        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
+
         return previous_output_quantize
+
+
+    def get_quantize_possible_hyperparameters(self):
+        return None
+    
 
     def get_size_in_bits(self):
         return 0
@@ -120,12 +135,41 @@ class MaxPool2d(Layer, nn.MaxPool2d):
         stride = self.stride
         padding = self.padding
 
-        layer_def = (
-            f"{self.__class__.__name__} {var_name}("
-            f"{input_channel_size}, {input_row_size}, {input_col_size}, "
-            f"{kernel_size}, {stride}, {padding});\n"
-        )
-        layer_header = f"extern {self.__class__.__name__} {var_name};\n\n"
+        scheme = None
+        if self.is_quantized and "quantize" in self.__dict__["_dmc"]:
+            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+
+        if scheme != QuantizationScheme.STATIC:
+
+            layer_def = (
+                f"{self.__class__.__name__} {var_name}("
+                f"{input_channel_size}, {input_row_size}, {input_col_size}, "
+                f"{kernel_size}, {stride}, {padding});\n"
+            )
+            layer_header = f"extern {self.__class__.__name__} {var_name};\n\n"
+        else:
+
+            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+            activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
+
+            quantize_property = ""
+
+            if activation_bitwidth == 8:
+                quantize_property += ACTIVATION_BITWIDTH_8
+            elif activation_bitwidth == 4:
+                quantize_property += ACTIVATION_BITWIDTH_4
+            elif activation_bitwidth == 2:
+                quantize_property += ACTIVATION_BITWIDTH_2
+            else:
+                raise QuantizationBitWidthError
+            
+            layer_def = (
+                f"{self.__class__.__name__}_SQ {var_name}("
+                f"{input_channel_size}, {input_row_size}, {input_col_size}, "
+                f"{kernel_size}, {stride}, {padding}, {quantize_property});\n"
+            )
+            layer_header = f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
+
         layer_param_def = ""
 
         return layer_header, layer_def, layer_param_def
@@ -170,14 +214,20 @@ class AvgPool2d(Layer, nn.AvgPool2d):
         return keep_prev_channel_index
 
 
-    def get_prune_channel_possible_hyperparameters(self):
+    def get_quantize_possible_hyperparameters(self):
         return None
     
 
-    def init_quantize(self, bitwidth, scheme, granularity, previous_output_quantize = None):
+    def init_quantize(self, parameter_bitwidth, granularity, scheme, activation_bitwidth=None, previous_output_quantize = None):
         """Pass-through for quantization observers."""
+
+        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
         return previous_output_quantize
 
+
+    def get_prune_channel_possible_hyperparameters(self):
+        return None
+    
 
     def get_size_in_bits(self):
         return 0
@@ -223,12 +273,41 @@ class AvgPool2d(Layer, nn.AvgPool2d):
         stride = self.stride
         padding = self.padding
 
-        layer_def = (
-            f"{self.__class__.__name__} {var_name}("
-            f"{input_channel_size}, {input_row_size}, {input_col_size}, "
-            f"{kernel_size}, {stride}, {padding});\n"
-        )
-        layer_header = f"extern {self.__class__.__name__} {var_name};\n\n"
+        scheme = None
+        if self.is_quantized and "quantize" in self.__dict__["_dmc"]:
+            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+
+        if scheme != QuantizationScheme.STATIC:
+
+            layer_def = (
+                f"{self.__class__.__name__} {var_name}("
+                f"{input_channel_size}, {input_row_size}, {input_col_size}, "
+                f"{kernel_size}, {stride}, {padding});\n"
+            )
+            layer_header = f"extern {self.__class__.__name__} {var_name};\n\n"
+        else:
+
+            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+            activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
+            
+            quantize_property = ""
+
+            if activation_bitwidth == 8:
+                quantize_property += ACTIVATION_BITWIDTH_8
+            elif activation_bitwidth == 4:
+                quantize_property += ACTIVATION_BITWIDTH_4
+            elif activation_bitwidth == 2:
+                quantize_property += ACTIVATION_BITWIDTH_2
+            else:
+                raise QuantizationBitWidthError
+            
+            layer_def = (
+                f"{self.__class__.__name__}_SQ {var_name}("
+                f"{input_channel_size}, {input_row_size}, {input_col_size}, "
+                f"{kernel_size}, {stride}, {padding}, {quantize_property});\n"
+            )
+            layer_header = f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
+
         layer_param_def = ""
 
         return layer_header, layer_def, layer_param_def

@@ -58,12 +58,14 @@ class Layer(ABC):
         """
         pass
 
+
     @abstractmethod
     def init_quantize(
         self, 
-        bitwidth: int, 
-        scheme: QuantizationScheme, 
+        parameter_bitwidth: int, 
         granularity: QuantizationGranularity, 
+        scheme: QuantizationScheme,
+        activation_bitwidth:Optional[int]=None,
         previous_output_quantize: Optional[Quantize] = None
     ):
         """
@@ -73,7 +75,23 @@ class Layer(ABC):
         1. Attach Input/Weight/Output quantization observers.
         2. Propagate scale factors from the previous layer (for static inference).
         """
+        if "quantize" not in self.__dict__["_dmc"]:
+            self.__dict__["_dmc"]["quantize"] = dict()
+        self.__dict__["_dmc"]["quantize"]["scheme"] = scheme
+        self.__dict__["_dmc"]["quantize"]["granularity"] = granularity
+        self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"] = parameter_bitwidth
+        self.__dict__["_dmc"]["quantize"]["activation_bitwidth"] = activation_bitwidth
+
         pass
+
+
+    @abstractmethod
+    def get_quantize_possible_hyperparameters(self):
+        return {
+            "parameter_bitwidth": [8, 4, 2], 
+            "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL]
+        }
+    
 
     @abstractmethod
     def get_compression_parameters(self):

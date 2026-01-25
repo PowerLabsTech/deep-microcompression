@@ -10,9 +10,6 @@
 
 #include "layer.h"
 
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME != STATIC
-
-
 
 /**
  * @class Flatten
@@ -41,11 +38,7 @@ public:
 };
 
 
-
-
-#else // QUANTIZATION_SCHEME
-
-class Flatten : public Layer {
+class Flatten_SQ : public Layer_SQ {
 private:
     uint32_t input_size;  ///< Total number of elements in input tensor
 
@@ -54,7 +47,7 @@ public:
      * @brief Constructor for quantized Flatten layer
      * @param size Number of elements in input tensor
      */
-    Flatten(uint32_t size);
+    Flatten_SQ(uint32_t size, uint8_t quantize_property);
 
     /**
      * @brief Forward pass for quantized flatten operation
@@ -64,7 +57,5 @@ public:
     int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
 };
 
-
-#endif // QUANTIZATION_SCHEME
 
 #endif // FLATTEN_H

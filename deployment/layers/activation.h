@@ -20,8 +20,6 @@
 #include "layer.h"
 
 
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME != STATIC
-
 /**
  * @brief Floating-point ReLU activation layer
  * 
@@ -47,7 +45,6 @@ public:
 };
 
 
-
 class ReLU6 : public Layer {
 private:
     uint32_t input_size;  ///< Number of elements in input tensor
@@ -68,11 +65,7 @@ public:
 };
 
 
-
-#else // QUANTIZATION_SCHEME
-
-
-class ReLU : public Layer {
+class ReLU_SQ : public Layer_SQ {
 private:
     uint32_t input_size;      ///< Number of elements in input tensor
     int8_t input_zero_point;  ///< Zero-point for quantized input
@@ -83,7 +76,7 @@ public:
      * @param input_size Number of elements in input tensor
      * @param input_zero_point Zero-point for quantized input
      */
-    ReLU(uint32_t input_size, int8_t input_zero_point);
+    ReLU_SQ(uint32_t input_size, int8_t input_zero_point, uint8_t quantize_property);
 
     /**
      * @brief Forward pass for quantized ReLU
@@ -94,7 +87,7 @@ public:
 };
 
 
-class ReLU6 : public Layer {
+class ReLU6_SQ : public Layer_SQ {
 private:
     uint32_t input_size;      ///< Number of elements in input tensor
     int8_t input_zero_point;  ///< Zero-point for quantized input
@@ -106,7 +99,7 @@ public:
      * @param input_size Number of elements in input tensor
      * @param input_zero_point Zero-point for quantized input
      */
-    ReLU6(uint32_t input_size, int8_t input_zero_point, int8_t input_six_point);
+    ReLU6_SQ(uint32_t input_size, int8_t input_zero_point, int8_t input_six_point, uint8_t quantize_property);
 
     /**
      * @brief Forward pass for quantized ReLU
@@ -115,10 +108,5 @@ public:
      */
     int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
 };
-
-
-
-
-#endif // QUANTIZATION_SCHEME
 
 #endif // ACTIVATION_H

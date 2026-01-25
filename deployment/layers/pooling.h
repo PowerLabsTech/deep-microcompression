@@ -10,8 +10,6 @@
 
 #include "layer.h"
 
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME != STATIC
-
 
 /**
  * @brief MaxPool2d layer for floating-point inference.
@@ -60,7 +58,6 @@ public:
 
 
 
-
 class AvgPool2d : public Layer {
 private:
     uint16_t input_channel_size;  ///< Number of input channels
@@ -102,11 +99,9 @@ public:
 };
 
 
-#else // QUANTIZATION_SCHEME
 
 
-
-class MaxPool2d : public Layer {
+class MaxPool2d_SQ : public Layer_SQ {
 private:
     uint16_t input_channel_size;  ///< Number of input channels
     uint16_t input_row_size;      ///< Height of input feature map
@@ -130,12 +125,15 @@ public:
      * @param stride Stride for pooling operation
      * @param padding Padding size around input
      */
-    MaxPool2d(uint16_t input_channel_size, 
-              uint16_t input_row_size, 
-              uint16_t input_col_size,
-              uint8_t kernel_size, 
-              uint8_t stride, 
-              uint8_t padding);
+    MaxPool2d_SQ(
+        uint16_t input_channel_size, 
+        uint16_t input_row_size, 
+        uint16_t input_col_size,
+        uint8_t kernel_size, 
+        uint8_t stride, 
+        uint8_t padding,
+        uint8_t quantize_property
+    );
 
     /**
      * @brief Forward pass for quantized max pooling.
@@ -149,7 +147,7 @@ public:
 
 
 
-class AvgPool2d : public Layer {
+class AvgPool2d_SQ : public Layer_SQ {
 private:
     uint16_t input_channel_size;  ///< Number of input channels
     uint16_t input_row_size;      ///< Height of input feature map
@@ -173,12 +171,15 @@ public:
      * @param stride Stride for pooling operation
      * @param padding Padding size around input
      */
-    AvgPool2d(uint16_t input_channel_size, 
-              uint16_t input_row_size, 
-              uint16_t input_col_size,
-              uint8_t kernel_size, 
-              uint8_t stride, 
-              uint8_t padding);
+    AvgPool2d_SQ(
+        uint16_t input_channel_size, 
+        uint16_t input_row_size, 
+        uint16_t input_col_size,
+        uint8_t kernel_size, 
+        uint8_t stride, 
+        uint8_t padding,
+        uint8_t quantize_property
+    );
 
     /**
      * @brief Forward pass for quantized max pooling.
@@ -189,8 +190,5 @@ public:
     int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
 };
 
-
-
-#endif // QUANTIZATION_SCHEME
 
 #endif // POOLING_H

@@ -7,15 +7,11 @@
 
 #include "layer.h"
 
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME != STATIC
 
 float* Layer::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Intentionally empty - to be implemented by derived classes
     return nullptr;
 }
-
-
-#else // QUANTIZATION_SCHEME
 
 /**
  * @brief Default forward pass implementation for floating-point layers
@@ -25,11 +21,7 @@ float* Layer::forward(float* input, float* workspace_start, uint32_t workspace_s
  * @note This base implementation does nothing and should be overridden
  *       by derived layer classes.
  */
-int8_t* Layer::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+int8_t* Layer_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Intentionally empty - to be implemented by derived classes
     return nullptr;
 }
-
-
-
-#endif // QUANTIZATION_SCHEME

@@ -23,7 +23,6 @@
 #define DYNAMIC 1
 #define STATIC 2
 
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME != STATIC
 
 /**
  * @brief Sequential container for floating-point neural network layers
@@ -39,6 +38,7 @@ private:
 
 public:
     float* input;                   ///< Pointer to model input buffer
+    float* output;
     /**
      * @brief Constructs a floating-point sequential model
      * @param layers Array of layer pointers
@@ -53,23 +53,22 @@ public:
      * 
      * Uses alternating buffers between layers to optimize memory usage
      */
-    float* predict(void);
+    void predict(void);
+    float get_output(uint32_t index);
+    void set_input(uint32_t index, float value);
 };
 
 
-
-#else // QUANTIZATION_SCHEME
-
-
-class Sequential {
+class Sequential_SQ {
 private:
-    Layer** layers;                  ///< Array of layer pointers
+    Layer_SQ** layers;                  ///< Array of layer pointers
     uint8_t layers_len;             ///< Number of layers in the model
     uint32_t workspace_size;        ///< Size of the pre-allocated memory
+    uint8_t quantize_property;
 
 public:
     int8_t* input;                  ///< Pointer to quantized input buffer
-
+    int8_t* output;
     /**
      * @brief Constructs a quantized sequential model
      * @param layers Array of layer pointers
@@ -77,16 +76,15 @@ public:
      * @param workspace Pre-allocated workspace memory
      * @param workspace_size Size of the pre-allocated workspace memory
      */
-    Sequential(Layer** layers, uint8_t layers_len, int8_t* workspace, uint32_t workspace_size);
+    Sequential_SQ(Layer_SQ** layers, uint8_t layers_len, int8_t* workspace, uint32_t workspace_size, uint8_t quantize_property);
     /**
      * @brief Executes forward pass through all quantized layers
      * 
      * Uses same alternating buffer strategy as floating-point version
      */
-    int8_t* predict(void);
+    void predict(void);
+    int8_t get_output(uint32_t index);
+    void set_input(uint32_t index, int8_t value);
 };
-
-#endif // QUANTIZATION_SCHEME
-
 
 #endif // SEQUENTIAL_H

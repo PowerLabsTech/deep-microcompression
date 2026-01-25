@@ -43,7 +43,12 @@ from ..compressors import (
     QuantizationScaleType,
     QuantizationGranularity,
 )
-from ..utils import convert_tensor_to_bytes_var
+from ..utils import (
+    convert_tensor_to_bytes_var,
+    ACTIVATION_BITWIDTH_2,
+    ACTIVATION_BITWIDTH_4,
+    ACTIVATION_BITWIDTH_8
+)
 from .fuse import *
 
 class Sequential(nn.Sequential):
@@ -528,19 +533,77 @@ class Sequential(nn.Sequential):
             elif configuration_type == "quantize":
                 quantize_config = compression_config.get("quantize")
                 scheme = quantize_config["scheme"]
-                granulatity = quantize_config["granularity"]
-                bitwidth = quantize_config["bitwidth"]
+                activation_bitwidth = quantize_config["activation_bitwidth"]
                 
-                if bitwidth is not None and bitwidth > 8:
+                granularity = quantize_config["granularity"]
+                parameter_bitwidth = quantize_config["parameter_bitwidth"]
+
+                if activation_bitwidth is not None and activation_bitwidth > 8:
                     if raise_error:
-                        raise ValueError(f"Invalid quantization bitwidth, {bitwidth}")
+                        raise ValueError(f"Invalid activation bitwidth, {activation_bitwidth}")
                     return False
 
-                if scheme == QuantizationScheme.NONE and (bitwidth is not None or granulatity is not None) or \
-                    (bitwidth is None or granulatity is None) and scheme != QuantizationScheme.NONE:
+                # TODO: Confirm if this boolean expression is correct
+                if (scheme == QuantizationScheme.NONE or scheme == QuantizationScheme.DYNAMIC) and activation_bitwidth is not None or \
+                    activation_bitwidth is None and not (scheme == QuantizationScheme.NONE or scheme == QuantizationScheme.DYNAMIC):
                     if raise_error:
-                        raise ValueError("When quantization scheme is NONE, bitwidth and granularity has to be None and vice versa.")
+                        raise ValueError("When quantization scheme is NONE, activation bitwidth has to be None and vice versa.")
                     return False
+                    
+                if scheme == QuantizationScheme.NONE: continue
+                
+                # For uniform quantization
+                if isinstance(parameter_bitwidth, int) and not isinstance(granularity, QuantizationGranularity) or \
+                    isinstance(granularity, QuantizationGranularity) and not isinstance(parameter_bitwidth, int):
+                    if raise_error:
+                        raise ValueError(f"When parameter bitwidth is a single value, granularity has to also be a single value and vice versa.")
+                    return False
+                
+                # For non uniform quantization, 
+                if isinstance(parameter_bitwidth, dict) and not isinstance(granularity, dict) or \
+                    isinstance(granularity, dict) and not isinstance(parameter_bitwidth, dict):
+                    if raise_error:
+                        raise ValueError(f"When parameter bitwidth is a dict, granularity has to also be a dict and vice versa.")
+                    return False
+                
+                if isinstance(parameter_bitwidth, int):
+                    layer_parameter_bitwidth = parameter_bitwidth
+                    layer_granularity = granularity
+                    parameter_bitwidth = dict()
+                    granularity = dict()
+                    for name in self.names():
+                        parameter_bitwidth[name] = layer_parameter_bitwidth
+                        granularity[name] = layer_granularity
+
+                elif isinstance(parameter_bitwidth, dict):
+                    assert len(parameter_bitwidth) == len(granularity) and parameter_bitwidth.keys() == granularity.keys(), \
+                            f"the keys of parameter_bitwidth has to match with that of granularity"
+                    
+                    for (layer_bitwidth_name, layer_parameter_bitwidth), (_, layer_granularity) in zip(parameter_bitwidth.items(), granularity.items()):
+                        # Skip if layer cannot be pruned (
+                        if not isinstance(layer_parameter_bitwidth, int):
+                            if raise_error:
+                                raise TypeError(f"layer parameter bitwidth has to be of type of int not {type(layer_sparsity)} for layer {name}!")
+                            return False
+                        if not isinstance(layer_granularity, QuantizationGranularity):
+                            if raise_error:
+                                raise TypeError(f"layer granularity has to be of type QuantizationGranularity not {type(layer_sparsity)} for layer {name}!")
+                            return False
+                        if layer_bitwidth_name not in self.names():
+                            if raise_error:
+                                raise NameError(f"Found unknown layer name {name}")
+                            return False
+                        if layer_parameter_bitwidth not in [2, 4, 8]:
+                            if raise_error:
+                                raise ValueError(f"Recieved a layer_sparsity of {layer_sparsity} ")
+                            return False
+                    for name in self.names():
+                        if name not in parameter_bitwidth:
+                            parameter_bitwidth[name] = 8
+                            granularity[name] = QuantizationGranularity.PER_TENSOR
+
+                quantize_config["parameter_bitwidth"] = parameter_bitwidth
+                quantize_config["granularity"] = granularity
                 
             else:
                 if raise_error:
@@ -601,29 +664,40 @@ class Sequential(nn.Sequential):
             Note: The output layer is excluded ([:-1]) as its output dimensions 
             are fixed by the classification task (10 for MNIST, 100 for CIFAR).
         """
-        prune_possible_hypermeters = dict()
+        prune_channel_possible_hypermeters = dict()
 
         for name, layer in list(self.names_layers())[:-1]:
-            layer_prune_possible_hypermeters = layer.get_prune_channel_possible_hyperparameters()
-            if layer_prune_possible_hypermeters is not None:
-                prune_possible_hypermeters[f"sparsity.{name}"] = layer_prune_possible_hypermeters
+            layer_prune_channel_possible_hypermeters = layer.get_prune_channel_possible_hyperparameters()
+            if layer_prune_channel_possible_hypermeters is not None:
+                prune_channel_possible_hypermeters[f"sparsity.{name}"] = layer_prune_channel_possible_hypermeters
 
         # TODO: To extend to other metric type
-        prune_possible_hypermeters["metric"] = ["l2"]
-        return prune_possible_hypermeters
+        prune_channel_possible_hypermeters["metric"] = ["l2"]
+        return prune_channel_possible_hypermeters
     
-    def get_quantize_possible_hyperparameters(self) -> Dict[str, Iterable]:
+    def get_quantize_possible_hyperparameters(self, scheme:QuantizationScheme=QuantizationScheme.STATIC) -> Dict[str, Iterable]:
         """
         Defines the valid search space for Quantization.
         """
-        return {
-            "scheme" : [QuantizationScheme.DYNAMIC, QuantizationScheme.STATIC],
-            "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
-            "bitwidth" : [2, 4, 8]
-        }
-    
+        if scheme != QuantizationScheme.STATIC:
+            activation_bitwidth = [None]
+        else:
+            activation_bitwidth = [8, 4, 2]
 
-    def get_commpression_possible_hyperparameters(self) -> Dict[str, Iterable]:
+        quantize_possible_hypermeters = dict()
+        quantize_possible_hypermeters["scheme"] = [scheme]
+        quantize_possible_hypermeters["activation_bitwidth"] = activation_bitwidth
+        
+        for name, layer in list(self.names_layers()):
+            layer_quantize_possible_hypermeters = layer.get_quantize_possible_hyperparameters()
+            if layer_quantize_possible_hypermeters is not None:
+                quantize_possible_hypermeters[f"parameter_bitwidth.{name}"] = layer_quantize_possible_hypermeters["parameter_bitwidth"]
+                quantize_possible_hypermeters[f"granularity.{name}"] = layer_quantize_possible_hypermeters["granularity"]
+
+        return quantize_possible_hypermeters
+
+
+    def get_commpression_possible_hyperparameters(self, scheme:QuantizationScheme=QuantizationScheme.STATIC) -> Dict[str, Iterable]:
         """
         Defines the valid search space for Compression.
         
@@ -632,7 +706,7 @@ class Sequential(nn.Sequential):
                  it is a flatted dict with each level indicated by a "."
         """
         prune_hp = self.get_prune_channel_possible_hyperparameters()
-        quant_hp = self.get_quantize_possible_hyperparameters()
+        quant_hp = self.get_quantize_possible_hyperparameters(scheme)
 
         compression_hp = dict()
         for name, hp in prune_hp.items():
@@ -685,30 +759,33 @@ class Sequential(nn.Sequential):
                               dynamic ranges (min/max) before training/deployment.
         """
         scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
-        bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
+        activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["activation_bitwidth"]
+        parameter_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["parameter_bitwidth"]
         granularity = self.__dict__["_dmc"]["compression_config"]["quantize"]["granularity"]
 
         if scheme == QuantizationScheme.NONE:
             return
 
-        if scheme != QuantizationScheme.STATIC:
-            for layer in self.layers():
-                layer.init_quantize(bitwidth, scheme, granularity)
+        elif scheme == QuantizationScheme.DYNAMIC:
+            for name, layer in self.names_layers():
+                layer.init_quantize(parameter_bitwidth[name], granularity[name], scheme)
             return
-        # We simulate this hardware constraint by placing a Quantize node at the very start of the network.
-        setattr(self, "input_quantize", Quantize(
-            self, bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC
-        ))
-        previous_output_quantize = self.input_quantize
-        for layer in self.layers():
-            previous_output_quantize = layer.init_quantize(bitwidth, scheme, granularity, previous_output_quantize)
+        
+        elif scheme == QuantizationScheme.STATIC:
+            # We simulate this hardware constraint by placing a Quantize node at the very start of the network.
+            setattr(self, "input_quantize", Quantize(
+                self, activation_bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC
+            ))
+            previous_output_quantize = self.input_quantize
+            for name, layer in self.names_layers():
+                previous_output_quantize = layer.init_quantize(parameter_bitwidth[name], granularity[name], scheme, activation_bitwidth, previous_output_quantize)
 
-        # We run a forward pass with calibration data to let the observers
-        self.train() # Ensure observers are updating
-        if scheme == QuantizationScheme.STATIC:
-            assert calibration_data is not None, f"Pass a calibration data when doing static quantization"
-            # self.to(calibration_data.device)
-            self(calibration_data)
+            # We run a forward pass with calibration data to let the observers
+            self.train() # Ensure observers are updating
+            if scheme == QuantizationScheme.STATIC:
+                assert calibration_data is not None, f"Pass a calibration data when doing static quantization"
+                # self.to(calibration_data.device)
+                self(calibration_data)
 
         return
 
@@ -838,8 +915,8 @@ class Sequential(nn.Sequential):
             scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
 
             if scheme == QuantizationScheme.STATIC:
-                bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
-                data_per_byte = (8 // bitwidth)
+                activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["activation_bitwidth"]
+                data_per_byte = (8 // activation_bitwidth)
 
         output_shape = input_shape
         # Track maximum tensor sizes at even/odd layers
@@ -912,53 +989,61 @@ class Sequential(nn.Sequential):
         scheme = None
         if self.is_quantized:
             scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
-        
-
-        # if scheme != QuantizationScheme.STATIC:
-        #     workspace_header = (
-        #         f"#define MAX_OUTPUT_EVEN_SIZE {max_output_even_size}\n"
-        #         f"#define MAX_OUTPUT_ODD_SIZE {max_output_odd_size}\n"
-        #         f"extern float workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
-        #     )
-        #     workspace_def = f"float workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
-        # else:
-        #     workspace_header = (
-        #         f"#define MAX_OUTPUT_EVEN_SIZE {max_output_even_size}\n"
-        #         f"#define MAX_OUTPUT_ODD_SIZE {max_output_odd_size}\n"
-        #         f"extern int8_t workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
-        #     )
-        #     workspace_def = f"int8_t workspace[MAX_OUTPUT_EVEN_SIZE + MAX_OUTPUT_ODD_SIZE];\n\n"
-
-
 
         if scheme != QuantizationScheme.STATIC:
+            
             workspace_header = (
                 f"#define WORKSPACE_SIZE {max_layer_acitivation_workspace_size}\n"
                 f"extern float workspace[WORKSPACE_SIZE];\n\n"
             )
             workspace_def = f"float workspace[WORKSPACE_SIZE];\n\n"
+
+            layers_header = (
+                f"#define LAYERS_LEN {len(self)}\n"
+                f"extern Layer* layers[LAYERS_LEN];\n\n"
+                f"extern Sequential {var_name};\n\n"
+            )
+            layers_def = (
+                f"{self.__class__.__name__} {var_name}(layers, LAYERS_LEN, workspace, WORKSPACE_SIZE);\n"
+                f"\nLayer* layers[LAYERS_LEN] = {{\n"
+            )
+        
         else:
+            scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
+            activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["activation_bitwidth"]
+
+            quantize_property = ""
+
+            if activation_bitwidth == 8:
+                quantize_property += ACTIVATION_BITWIDTH_8
+            elif activation_bitwidth == 4:
+                quantize_property += ACTIVATION_BITWIDTH_4
+            elif activation_bitwidth == 2:
+                quantize_property += ACTIVATION_BITWIDTH_2
+            else:
+                raise QuantizationBitWidthError
+            
             workspace_header = (
                 f"#define WORKSPACE_SIZE {max_layer_acitivation_workspace_size}\n"
                 f"extern int8_t workspace[WORKSPACE_SIZE];\n\n"
             )
             workspace_def = f"int8_t workspace[WORKSPACE_SIZE];\n\n"
 
+            layers_header = (
+                f"#define LAYERS_LEN {len(self)}\n"
+                f"extern Layer_SQ* layers[LAYERS_LEN];\n\n"
+                f"extern Sequential_SQ {var_name};\n\n"
+            )
+            layers_def = (
+                f"{self.__class__.__name__}_SQ {var_name}(layers, LAYERS_LEN, workspace, WORKSPACE_SIZE, {quantize_property});\n"
+                f"\nLayer_SQ* layers[LAYERS_LEN] = {{\n"
+            )
+            
 
         header_file += workspace_header
         definition_file += workspace_def
 
         # Generate layer declarations
-        layers_header = (
-            f"#define LAYERS_LEN {len(self)}\n"
-            f"extern Layer* layers[LAYERS_LEN];\n\n"
-            f"extern Sequential {var_name};\n\n"
-        )
-        layers_def = (
-            f"{self.__class__.__name__} {var_name}(layers, LAYERS_LEN, workspace, WORKSPACE_SIZE);\n"
-            f"\nLayer* layers[LAYERS_LEN] = {{\n"
-        )
-        
         for layer_name, layer in self.names_layers():
 
             layers_def += f"    &{layer_name},\n"
@@ -983,10 +1068,6 @@ class Sequential(nn.Sequential):
 
 
         if test_input is not None:
-
-            bitwidth = None
-            if self.is_quantized:
-                bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["bitwidth"]
 
             if self.is_quantized and self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"] == QuantizationScheme.STATIC:
                 _, test_input_def = convert_tensor_to_bytes_var(

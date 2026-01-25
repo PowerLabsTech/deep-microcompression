@@ -112,7 +112,7 @@ def get_nas_compression_data(
     data_loader:torch.utils.data.DataLoader, 
     metric_fun:Callable[[torch.Tensor, torch.Tensor], float], 
     calibration_data:torch.Tensor,
-    filter:Callable = lambda compressed_model, compression_config: True,
+    condition:Callable = lambda compressed_model, compression_config: True,
     device:str="cpu",
     num_data:int=100,
     train:bool=False,
@@ -160,7 +160,7 @@ def get_nas_compression_data(
                     device=device
                 )
 
-                valid = filter(compressed_model, compression_config_decode)
+                valid = condition(compressed_model, compression_config_decode)
         
         if train:
             optimizer_fun = torch.optim.SGD(compressed_model.parameters(), lr=1e-3, momentum=.9, weight_decay=5e-4)
@@ -198,7 +198,7 @@ def get_nas_compression_data(
 
 def get_size_of_compression(
     model:Sequential, 
-    filter:Callable = lambda compression_config: True
+    condition:Callable = lambda compression_config: True
 ):
     # helper to list all compression combinations
     num_valid_compressions = 0
@@ -213,7 +213,7 @@ def get_size_of_compression(
             compression_keys=["quantize"], 
             raise_error=False
         ):
-            if filter(decode_config):
+            if condition(decode_config):
                 num_valid_compressions += 1
     return num_valid_compressions
 
@@ -223,7 +223,7 @@ def brute_force_search_compression_config(
     estimator:Estimator,
     input_shape:Tuple,
     calibration_data:torch.Tensor,
-    condition:Callable=lambda metric, size, ram, config: True,                 # list of filters
+    condition:Callable=lambda metric, size, ram, config: True,                 # list of conditions
     objective:Callable=lambda metric, size, ram, config: metric,                  # objective function, default objective = maximize metric
     maximize:bool=True,                   # maximize or minimize?
     verbose:bool=True
@@ -241,7 +241,7 @@ def brute_force_search_compression_config(
         verbose: print progress
 
     Returns:
-        best_comb, best_obj_value, history
+        best_config, best_obj_value, history
     """
 
     # initialize best value based on maximize/minimize
@@ -250,7 +250,7 @@ def brute_force_search_compression_config(
     else:
         best_value = float("inf")
 
-    best_comb = None
+    best_config = None
 
     search_space = model.get_commpression_possible_hyperparameters()
 
@@ -296,12 +296,17 @@ def brute_force_search_compression_config(
 
         if (maximize and obj > best_value) or (not maximize and obj < best_value):
             best_value = obj
-            best_comb = compression_config
+            best_config = compression_config
             best_result_info = [metric, size, ram]
             if verbose:
                 print(f"✔ New best: obj={obj:.4f}, metric={metric:.4f}, size={size:.4f}, ram={ram}, comb={compression_config}")
 
-    return best_comb, best_result_info
+    best_result_info = {
+        "metric": best_result_info[0],
+        "size": best_result_info[1],
+        "ram": best_result_info[2]
+    }
+    return best_config, best_result_info
 
 
 def evolutionary_search_compression_config(
@@ -310,7 +315,7 @@ def evolutionary_search_compression_config(
     input_shape:Tuple,
     calibration_data:torch.Tensor,
     device:str="cpu",
-    condition:Callable=lambda metric, size, ram, config: True,                 # list of filters
+    condition:Callable=lambda metric, size, ram, config: True,                 # list of conditions
     objective:Callable=lambda metric, size, ram, config: metric,                  # objective function, default objective = maximize metric
     maximize:bool=True,                   # maximize or minimize?
     verbose:bool=True,
@@ -372,7 +377,7 @@ def evolutionary_search_compression_config(
         ram = compressed.get_min_workspace_arena(input_shape) / 2
 
         # -------- HARD FILTERS --------
-        if not condition(metric, size, ram, compression_config):
+        if not condition(metric, size, ram, model.decode_compression_dict_hyperparameter(compression_config)):
             # Penalty fitness for invalid solutions
             return (float("-inf") if maximize else float("inf")), [metric, size, ram]
 
@@ -403,9 +408,9 @@ def evolutionary_search_compression_config(
     # Evolutionary Loop
     population = [create_individual() for _ in range(population_size)]
     
-    best_overall_comb = None
+    best_overall_config = None
     best_overall_score = float("-inf") if maximize else float("inf")
-    best_overall_info = None
+    best_overall_info = []
 
     for gen in tqdm(range(generations)):
         # Evaluate Population
@@ -420,7 +425,7 @@ def evolutionary_search_compression_config(
             is_better = (score > best_overall_score) if maximize else (score < best_overall_score)
             if is_better and score != float("-inf") and score != float("inf"):
                 best_overall_score = score
-                best_overall_comb = individual
+                best_overall_config = individual
                 best_overall_info = info
                 if verbose:
                     print(f"Gen {gen}: ✔ New best! Obj={score:.4f} Metric={info[0]:.4f} Size={info[1]:.4f}")
@@ -474,6 +479,11 @@ def evolutionary_search_compression_config(
             avg_score = sum(valid_scores) / len(valid_scores) if valid_scores else 0
             print(f"Gen {gen}/{generations} Complete. Avg Score: {avg_score:.4f}")
 
-    return best_overall_comb, best_overall_info
+    best_overall_info = {
+        "metric": best_overall_info[0],
+        "size": best_overall_info[1],
+        "ram": best_overall_info[2]
+    }
+    return best_overall_config, best_overall_info
                 
         

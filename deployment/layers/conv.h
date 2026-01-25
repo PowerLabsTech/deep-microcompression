@@ -21,9 +21,7 @@
 #define CONV_H
 
 #include "layer.h"
-#include "pad.h"
 
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME == NONE
 
 /**
  * @brief Floating-point 2D convolution layer
@@ -47,7 +45,6 @@ protected:
     // Operation parameters
     uint8_t stride_row;         ///< Vertical stride
     uint8_t stride_col;         ///< Horizontal stride
-    Padding_t  padding;            ///< Padding type (0=VALID, 1=SAME)
     uint8_t groups;
 
     // Weight and bias tensors
@@ -65,13 +62,12 @@ public:
      * @param kernel_col_size Kernel width
      * @param stride_row Vertical stride
      * @param stride_col Horizontal stride
-     * @param padding Padding type (0=VALID, 1=SAME)
      * @param weight Pointer to weight tensor
      * @param bias Pointer to bias tensor
      */
     Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
            uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
-           uint8_t stride_row, uint8_t stride_col, Padding_t padding, uint8_t groups,
+           uint8_t stride_row, uint8_t stride_col, uint8_t groups,
            const float* weight, const float* bias);
     
     /**
@@ -82,15 +78,13 @@ public:
     float* forward(float* input, float* workspace_start, uint32_t workspace_size);
 };
 
-#elif QUANTIZATION_SCHEME == DYNAMIC // QUANTIZATION_SCHEME
-
 
 /**
  * @brief Dynamically quantized 2D convolution layer
  * 
  * Uses int8_t weights with float input/output and per-tensor scaling
  */
-class Conv2d : public Layer {
+class Conv2d_DQ : public Layer {
 protected:
     // Input tensor dimensions
     uint16_t input_channel_size;  ///< Number of input channels
@@ -109,13 +103,14 @@ protected:
     // Operation parameters
     uint8_t stride_row;         ///< Vertical stride
     uint8_t stride_col;         ///< Horizontal stride
-    Padding_t padding;            ///< Padding type (0=VALID, 1=SAME)
     uint8_t groups;
 
     // Quantization parameters
     const int8_t* weight;       ///< Pointer to quantized weight tensor
     const float* bias;          ///< Pointer to bias tensor (float)
-    float weight_scale;         ///< Scale factor for weights
+    const float* weight_scale;         ///< Scale factor for weights
+
+    uint8_t quantize_property;
 
 public:
     /**
@@ -123,10 +118,10 @@ public:
      * @param weight_scale Scale factor for quantized weights
      * @param other parameters same as floating-point version
      */
-    Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
+    Conv2d_DQ(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
            uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
-           uint8_t stride_row, uint8_t stride_col, Padding_t padding, uint8_t groups,
-           const int8_t* weight, const float* bias, float weight_scale);
+           uint8_t stride_row, uint8_t stride_col, uint8_t groups,
+           const int8_t* weight, const float* bias, const float* weight_scale, uint8_t quantize_property);
 
     /**
      * @brief Forward pass for dynamically quantized Conv2d
@@ -137,9 +132,7 @@ public:
 };
 
 
-#elif QUANTIZATION_SCHEME == STATIC // QUANTIZATION_SCHEME
-
-class Conv2d : public Layer {
+class Conv2d_SQ : public Layer_SQ {
 protected:
     // Input tensor dimensions
     uint16_t input_channel_size;  ///< Number of input channels
@@ -158,7 +151,6 @@ protected:
     // Operation parameters
     uint8_t stride_row;         ///< Vertical stride
     uint8_t stride_col;         ///< Horizontal stride
-    Padding_t padding;            ///< Padding type (0=VALID, 1=SAME)
     uint8_t groups;
 
     // Weight and bias tensors
@@ -170,19 +162,18 @@ protected:
     int8_t output_zero_point;    ///< Output tensor zero point
     int8_t input_zero_point;     ///< Input tensor zero point
 
-    float bias_scale;           ///< Bias scale factor
+    float* bias_scale;           ///< Bias scale factor
 
 public:
-    Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
+    Conv2d_SQ(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
            uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
-           uint8_t stride_row, uint8_t stride_col, Padding_t padding, uint8_t groups,
+           uint8_t stride_row, uint8_t stride_col, uint8_t groups,
            const int8_t* weight, const int32_t* bias, float output_scale, 
-           int8_t output_zero_point, int8_t input_zero_point,  float bias_scale);
+           int8_t output_zero_point, int8_t input_zero_point,  float* bias_scale, uint8_t quantize_property);
 
     int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
 };
 
 
-#endif // QUANTIZATION_SCHEME
 
 #endif // CONV_H

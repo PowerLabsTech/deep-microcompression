@@ -24,16 +24,16 @@ float* BatchNorm2d::forward(float* input, float* workspace_start, uint32_t works
         for (uint16_t m = 0; m < this->input_row_size; m++) {
             for (uint16_t l = 0; l < this->input_col_size; l++) {
 
-                act_write_float(output, 
+                activation_write_float(output, 
                         ((n * this->input_row_size * this->input_col_size) + 
                         (m * this->input_col_size) + 
                         l),
-                        ((act_read_float(input,
+                        ((activation_read_float(input,
                             ((n * this->input_row_size * this->input_col_size) + 
                             (m * this->input_col_size) + 
                             l)
-                        ) * par_read_float(this->folded_weight, n)) + 
-                        par_read_float(this->folded_bias, n))
+                        ) * parameter_read_float(this->folded_weight, n)) + 
+                        parameter_read_float(this->folded_bias, n))
                 );
             }
         }

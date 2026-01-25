@@ -15,11 +15,6 @@
 #include <math.h>    // For math operations
 
 
-// #define QUANTIZATION_SCHEME DYNAMIC 
-// #define QUANTIZATION_GRANULARITY PER_TENSOR
-
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME != STATIC
-
 /**
  * @class Layer
  * @brief Abstract base class for all floating-point layers
@@ -40,9 +35,8 @@ public:
     virtual float* forward(float* input, float* workspace_start, uint32_t workspace_size) = 0;
 };
 
-#else // QUANTIZATION_SCHEME
 
-class Layer {
+class Layer_SQ {
 public:
     /**
      * @brief Forward pass interface for floating-point layers
@@ -52,11 +46,9 @@ public:
      * 
      * @note Pure virtual function - must be implemented by derived classes
      */
+    uint8_t quantize_property;
     virtual int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) = 0;
 };
 
-
-
-#endif // QUANTIZATION_SCHEME
 
 #endif // LAYER_H

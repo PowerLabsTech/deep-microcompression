@@ -19,6 +19,7 @@ from ..utils import (
     convert_tensor_to_bytes_var,
     get_size_in_bits,
 )
+from ..compressors import QuantizationScheme
 
 class BatchNorm2d(Layer, nn.BatchNorm2d):
     """
@@ -87,7 +88,7 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
 
 
     @torch.no_grad()
-    def init_quantize(self, bitwidth, scheme, granularity, previous_output_quantize = None):
+    def init_quantize(self, parameter_bitwidth, granularity, scheme, activation_bitwidth=None, previous_output_quantize = None):
         """
         Configures quantization.
         
@@ -98,11 +99,16 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
         If this runs, it implies the user is running a floating-point baseline 
         or dynamic quantization.
         """
+        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
         # if scheme == QuantizationScheme.STATIC:
         #     raise RuntimeError("Can not perform static quantization with BatchNorm2d, fuse the model first!")
             
         return previous_output_quantize
 
+
+    def get_quantize_possible_hyperparameters(self):
+        return None
+    
 
     def get_size_in_bits(self):
         """Calculates size of the effective (folded) parameters."""

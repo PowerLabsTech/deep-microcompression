@@ -13,8 +13,6 @@
 #include "activation.h"
 
 
-#if !defined(QUANTIZATION_SCHEME) || QUANTIZATION_SCHEME != STATIC
-
 /**
  * @brief Constructor for floating-point ReLU layer
  * @param input_size Number of elements in input tensor
@@ -36,7 +34,7 @@ float* ReLU::forward(float* input, float* workspace_start, uint32_t workspace_si
 
     // Apply ReLU function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
-        act_write_float(output, i, relu(act_read_float(input, i)));
+        activation_write_float(output, i, relu(activation_read_float(input, i)));
     }
 
     return output;
@@ -53,52 +51,63 @@ float* ReLU6::forward(float* input, float* workspace_start, uint32_t workspace_s
 
     // Apply ReLU6 function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
-        act_write_float(output, i, relu6(act_read_float(input, i)));
+        activation_write_float(output, i, relu6(activation_read_float(input, i)));
     }
 
     return output;
 }
 
 
-#else // QUANTIZATION_SCHEME
-
-
-ReLU::ReLU(uint32_t input_size, int8_t input_zero_point) {
+ReLU_SQ::ReLU_SQ(uint32_t input_size, int8_t input_zero_point, uint8_t quantize_property) {
     this->input_size = input_size;
     this->input_zero_point = input_zero_point;
+    this->quantize_property = quantize_property;
 }
 
-int8_t* ReLU::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+int8_t* ReLU_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-        int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / DATA_PER_BYTE) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
+    
+    void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
+    int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
+    
+    get_activation_write_packed_intb(this->quantize_property, &activation_write_packed_intb);
+    get_activation_read_packed_intb(this->quantize_property, &activation_read_packed_intb);
 
     // Apply quantized ReLU function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
         // output[i] = relu_zero_point(input[i], this->input_zero_point);
-        act_write_packed_intb(output, i, relu_zero_point(act_read_packed_intb(input, i), this->input_zero_point));
+        activation_write_packed_intb(output, i, relu_zero_point(activation_read_packed_intb(input, i), this->input_zero_point));
         
     }
 
     return output;
 }
 
-ReLU6::ReLU6(uint32_t input_size, int8_t input_zero_point, int8_t input_six_point) {
+
+ReLU6_SQ::ReLU6_SQ(uint32_t input_size, int8_t input_zero_point, int8_t input_six_point, uint8_t quantize_property) {
     this->input_size = input_size;
     this->input_zero_point = input_zero_point;
     this->input_six_point = input_six_point;
+    this->quantize_property = quantize_property;
 }
 
-int8_t* ReLU6::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+int8_t* ReLU6_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-        int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / DATA_PER_BYTE) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
+        
+    void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
+    int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
+    
+    get_activation_write_packed_intb(this->quantize_property, &activation_write_packed_intb);
+    get_activation_read_packed_intb(this->quantize_property, &activation_read_packed_intb);
 
     // Apply quantized ReLU6 function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
-        act_write_packed_intb(output, i, relu6_zero_point(act_read_packed_intb(input, i), this->input_zero_point, this->input_six_point));
+        activation_write_packed_intb(output, i, relu6_zero_point(activation_read_packed_intb(input, i), this->input_zero_point, this->input_six_point));
     }
 
     return output;
 }
 
 
-#endif // QUANTIZATION_SCHEME

@@ -5,6 +5,7 @@ from .conv import Conv2d
 from .flatten import Flatten
 from .layer import Layer
 from .linear import Linear
+from .padding import ConstantPad2d
 from .pooling import AvgPool2d, MaxPool2d
 
 
@@ -15,6 +16,7 @@ __all__ = [
     "BatchNorm2d",
     "BranchLayer",
     "Conv2d",
+    "ConstantPad2d",
     "Flatten",
     "Linear",
     "Layer",
