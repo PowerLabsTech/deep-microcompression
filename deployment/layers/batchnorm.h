@@ -24,6 +24,7 @@ public:
                 const float* folded_weight, const float* folded_bias);
 
     float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 

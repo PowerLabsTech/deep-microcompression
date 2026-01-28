@@ -16,9 +16,7 @@ float* ConstantPad2d::forward(float* input, float* workspace_start, uint32_t wor
     uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
     uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
 
-    float* output = input == workspace_start ? workspace_start + workspace_size - (
-        this->input_channel_size * padded_row_size * padded_col_size 
-    ) : workspace_start;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
 
     if (this->padding.is_padded()) {
         for (int32_t n = this->input_channel_size-1; n > -1; n--) {
@@ -56,6 +54,11 @@ float* ConstantPad2d::forward(float* input, float* workspace_start, uint32_t wor
 }
 
 
+uint32_t ConstantPad2d::get_output_size(void) {
+    return this->input_channel_size * \
+            this->input_row_size + this->padding.padding_top + this->padding.padding_bottom * \
+            this->input_col_size + this->padding.padding_left + this->padding.padding_right;
+}
 
 
 
@@ -78,7 +81,7 @@ int8_t* ConstantPad2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32
     uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
 
     int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(
-        (float)(this->input_channel_size * padded_row_size * padded_col_size) / get_activation_data_per_byte(this->quantize_property)
+        (float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)
     ) : workspace_start;
 
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
@@ -119,4 +122,10 @@ int8_t* ConstantPad2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32
         }
     }
     return output;
+}
+
+uint32_t ConstantPad2d_SQ::get_output_size(void) {
+    return this->input_channel_size * \
+        this->input_row_size + this->padding.padding_top + this->padding.padding_bottom * \
+        this->input_col_size + this->padding.padding_left + this->padding.padding_right;
 }

@@ -13,6 +13,12 @@ float* Layer::forward(float* input, float* workspace_start, uint32_t workspace_s
     return nullptr;
 }
 
+
+uint32_t Layer::get_output_size(void) {
+    return 0;
+}
+
+
 /**
  * @brief Default forward pass implementation for floating-point layers
  * @param input Pointer to input tensor (float)
@@ -25,3 +31,9 @@ int8_t* Layer_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t works
     // Intentionally empty - to be implemented by derived classes
     return nullptr;
 }
+
+
+uint32_t Layer_SQ::get_output_size(void) {
+    return 0;
+}
+

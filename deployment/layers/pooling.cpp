@@ -43,7 +43,7 @@ MaxPool2d::MaxPool2d(uint16_t input_channel_size, uint16_t input_row_size,
  */
 float* MaxPool2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - (this->input_channel_size * this->output_row_size * this->output_col_size) : workspace_start;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
 
     float temp, input_val;
 
@@ -83,7 +83,9 @@ float* MaxPool2d::forward(float* input, float* workspace_start, uint32_t workspa
     return output;
 }
 
-
+uint32_t MaxPool2d::get_output_size(void) {
+    return (this->input_channel_size * this->output_row_size * this->output_col_size);
+}
 
 AvgPool2d::AvgPool2d(uint16_t input_channel_size, uint16_t input_row_size, 
                     uint16_t input_col_size, uint8_t kernel_size, 
@@ -103,7 +105,7 @@ AvgPool2d::AvgPool2d(uint16_t input_channel_size, uint16_t input_row_size,
 
 float* AvgPool2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - (this->input_channel_size * this->output_row_size * this->output_col_size) : workspace_start;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
 
     float total;
     uint8_t pool_size = this->kernel_size * this->kernel_size;
@@ -141,6 +143,11 @@ float* AvgPool2d::forward(float* input, float* workspace_start, uint32_t workspa
 }
 
 
+uint32_t AvgPool2d::get_output_size(void) {
+    return (this->input_channel_size * this->output_row_size * this->output_col_size);
+}
+
+
 MaxPool2d_SQ::MaxPool2d_SQ(uint16_t input_channel_size, uint16_t input_row_size,
                     uint16_t input_col_size, uint8_t kernel_size,
                     uint8_t stride, uint8_t padding, uint8_t quantize_property) {
@@ -161,7 +168,7 @@ MaxPool2d_SQ::MaxPool2d_SQ(uint16_t input_channel_size, uint16_t input_row_size,
 
 int8_t* MaxPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)(this->input_channel_size * this->output_row_size * this->output_col_size) / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
 
     int8_t temp, input_val;
     
@@ -212,6 +219,10 @@ int8_t* MaxPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
     return output;
 }
 
+uint32_t MaxPool2d_SQ::get_output_size(void) {
+    return (this->input_channel_size * this->output_row_size * this->output_col_size);
+}
+
 
 AvgPool2d_SQ::AvgPool2d_SQ(uint16_t input_channel_size, uint16_t input_row_size,
                     uint16_t input_col_size, uint8_t kernel_size,
@@ -233,7 +244,7 @@ AvgPool2d_SQ::AvgPool2d_SQ(uint16_t input_channel_size, uint16_t input_row_size,
 
 int8_t* AvgPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)(this->input_channel_size * this->output_row_size * this->output_col_size) / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
 
     int16_t total;
 
@@ -279,4 +290,6 @@ int8_t* AvgPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
     return output;
 }
 
-
+uint32_t AvgPool2d_SQ::get_output_size(void) {
+    return (this->input_channel_size * this->output_row_size * this->output_col_size);
+}

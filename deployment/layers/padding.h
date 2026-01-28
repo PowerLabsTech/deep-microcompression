@@ -42,6 +42,7 @@ public:
                     uint16_t input_col_size, float value, Padding_t padding);
 
     float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 
@@ -58,8 +59,9 @@ private:
     
 public:
     ConstantPad2d_SQ(uint16_t input_channel_size, uint16_t input_row_size, 
-                    uint16_t input_col_size, int8_t value, Padding_t padding,  uint8_t quantize_property);
+                    uint16_t input_col_size, int8_t input_value_point, Padding_t padding,  uint8_t quantize_property);
     int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 

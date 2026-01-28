@@ -18,7 +18,7 @@ BatchNorm2d::BatchNorm2d(uint16_t input_channel_size, uint16_t input_row_size, u
 float* BatchNorm2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
 
     // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - (this->input_channel_size * this->input_row_size * this->input_col_size) : workspace_start;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
 
     for (uint16_t n = 0; n < this->input_channel_size; n++) {
         for (uint16_t m = 0; m < this->input_row_size; m++) {
@@ -41,6 +41,12 @@ float* BatchNorm2d::forward(float* input, float* workspace_start, uint32_t works
     
     return output;
 }
+
+
+uint32_t BatchNorm2d::get_output_size(void) {
+    return (this->input_channel_size * this->input_row_size * this->input_col_size);
+}
+
 
 
 #else // QUANTIZATION_SCHEME

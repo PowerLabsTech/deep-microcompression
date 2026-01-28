@@ -54,6 +54,7 @@ public:
      * @param output Pointer to output tensor (float)
      */
     float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 
@@ -96,6 +97,7 @@ public:
      * @param output Pointer to output tensor (float)
      */
     float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 
@@ -142,6 +144,7 @@ public:
      * @param output Pointer to output tensor (int8_t)
      */
     int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 
@@ -188,6 +191,7 @@ public:
      * @param output Pointer to output tensor (int8_t)
      */
     int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 

@@ -76,6 +76,7 @@ public:
      * @param output Output tensor (float)
      */
     float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 
@@ -129,6 +130,7 @@ public:
      * @param output Output tensor (float)
      */
     float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 
@@ -172,6 +174,7 @@ public:
            int8_t output_zero_point, int8_t input_zero_point,  float* bias_scale, uint8_t quantize_property);
 
     int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void);
 };
 
 

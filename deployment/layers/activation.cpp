@@ -30,7 +30,7 @@ ReLU::ReLU(uint32_t input_size) {
  */
 float* ReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
 
     // Apply ReLU function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
@@ -40,6 +40,10 @@ float* ReLU::forward(float* input, float* workspace_start, uint32_t workspace_si
     return output;
 }
 
+uint32_t ReLU::get_output_size(void) {
+    return this->input_size;
+}
+
 
 ReLU6::ReLU6(uint32_t input_size) {
     this->input_size = input_size;
@@ -47,7 +51,7 @@ ReLU6::ReLU6(uint32_t input_size) {
 
 float* ReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
 
     // Apply ReLU6 function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
@@ -55,6 +59,11 @@ float* ReLU6::forward(float* input, float* workspace_start, uint32_t workspace_s
     }
 
     return output;
+}
+
+
+uint32_t ReLU6::get_output_size(void) {
+    return this->input_size;
 }
 
 
@@ -66,7 +75,7 @@ ReLU_SQ::ReLU_SQ(uint32_t input_size, int8_t input_zero_point, uint8_t quantize_
 
 int8_t* ReLU_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
     
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
     int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
@@ -85,6 +94,12 @@ int8_t* ReLU_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t worksp
 }
 
 
+uint32_t ReLU_SQ::get_output_size(void) {
+    return this->input_size;
+}
+
+
+
 ReLU6_SQ::ReLU6_SQ(uint32_t input_size, int8_t input_zero_point, int8_t input_six_point, uint8_t quantize_property) {
     this->input_size = input_size;
     this->input_zero_point = input_zero_point;
@@ -94,7 +109,7 @@ ReLU6_SQ::ReLU6_SQ(uint32_t input_size, int8_t input_zero_point, int8_t input_si
 
 int8_t* ReLU6_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
         
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
     int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
@@ -111,3 +126,7 @@ int8_t* ReLU6_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t works
 }
 
 
+
+uint32_t ReLU6_SQ::get_output_size(void) {
+    return this->input_size;
+}

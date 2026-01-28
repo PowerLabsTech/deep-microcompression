@@ -28,7 +28,7 @@ Flatten::Flatten(uint32_t input_size) {
  */
 float* Flatten::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->input_size : workspace_start;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
 
     // Perform element-wise copy (no transformation needed)
     for (uint32_t i = 0; i < this->input_size; i++) {
@@ -39,6 +39,12 @@ float* Flatten::forward(float* input, float* workspace_start, uint32_t workspace
 }
 
 
+uint32_t Flatten::get_output_size(void) {
+    return this->input_size;
+}
+
+
+
 Flatten_SQ::Flatten_SQ(uint32_t input_size, uint8_t quantize_property) {
     this->input_size = input_size;
     this->quantize_property = quantize_property;
@@ -46,7 +52,7 @@ Flatten_SQ::Flatten_SQ(uint32_t input_size, uint8_t quantize_property) {
 
 int8_t* Flatten_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->input_size / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
+    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
 
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
     int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
@@ -62,3 +68,9 @@ int8_t* Flatten_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t wor
 
     return output;
 }
+
+
+uint32_t Flatten_SQ::get_output_size(void) {
+    return this->input_size;
+}
+

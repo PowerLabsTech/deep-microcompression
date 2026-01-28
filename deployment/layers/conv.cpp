@@ -50,9 +50,7 @@ Conv2d::Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t in
  */
 float* Conv2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - (
-        this->output_channel_size * this->output_row_size * this->output_col_size 
-    ) : workspace_start;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
 
     float output_temp;
 
@@ -107,6 +105,10 @@ float* Conv2d::forward(float* input, float* workspace_start, uint32_t workspace_
 }
 
 
+uint32_t Conv2d::get_output_size(void) {
+    return (this->output_channel_size * this->output_row_size * this->output_col_size);
+}
+
 /**
  * @brief Constructor for dynamically quantized Conv2d layer
  * @param weight_scale Scale factor for quantized weights
@@ -147,9 +149,7 @@ Conv2d_DQ::Conv2d_DQ(uint16_t input_channel_size, uint16_t input_row_size, uint1
  */
 float* Conv2d_DQ::forward(float* input, float* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - (
-        this->output_channel_size * this->output_row_size * this->output_col_size 
-    ) : workspace_start;
+    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
 
     int8_t (*parameter_read_packed_intb) (const int8_t*, uint32_t);
     
@@ -211,6 +211,10 @@ float* Conv2d_DQ::forward(float* input, float* workspace_start, uint32_t workspa
 }
 
 
+uint32_t Conv2d_DQ::get_output_size(void) {
+    return (this->output_channel_size * this->output_row_size * this->output_col_size);
+}
+
 Conv2d_SQ::Conv2d_SQ(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
                uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
                uint8_t stride_row, uint8_t stride_col, uint8_t groups,
@@ -252,7 +256,7 @@ Conv2d_SQ::Conv2d_SQ(uint16_t input_channel_size, uint16_t input_row_size, uint1
 int8_t* Conv2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
     // Getting the output start address with the input size as offset
     int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(
-        (float)(this->output_channel_size * this->output_row_size * this->output_col_size) / get_activation_data_per_byte(this->quantize_property)
+        (float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)
     ) : workspace_start;
 
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
@@ -320,4 +324,9 @@ int8_t* Conv2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t work
         }
     }
     return output;
+}
+
+
+uint32_t Conv2d_SQ::get_output_size(void) {
+    return (this->output_channel_size * this->output_row_size * this->output_col_size);
 }
