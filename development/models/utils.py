@@ -1,5 +1,7 @@
 import random
 import itertools
+import copy
+import logging
 from collections import defaultdict
 from typing import Iterable, List, Dict, Tuple, Optional, Callable, Union
 
@@ -44,16 +46,25 @@ def convert_from_layer_torch_nn_to_dmc(module: nn.Module) -> Layer:
         tensor_destination.copy_(tensor_source)
 
     if isinstance(module, nn.Conv2d):
-        pad = [module.padding[0]]*2 + [module.padding[1]]*2
+        padding = [module.padding[0]]*2 + [module.padding[1]]*2
+        if module.padding_mode == "zeros":
+            value = 0
+        else:
+            raise ValueError(f"Padding Layer to handle padding_mode {module.padding_mode} is yet to be defined.")
+        
         layer = Conv2d(
             in_channels=module.in_channels, out_channels=module.out_channels, 
-            kernel_size=module.kernel_size, stride=module.stride, pad=pad, 
+            kernel_size=module.kernel_size, stride=module.stride,
             bias=module.bias is not None
         )
         copy_tensor(module.weight, layer.weight)
         if layer.bias is not None:
             copy_tensor(module.bias, layer.bias)
 
+        layer = Sequential(
+            ConstantPad2d(padding=padding, value=value),
+            layer
+        )
     elif isinstance(module, nn.Linear):
         layer = Linear(
             in_features=module.in_features, out_features=module.out_features, 
@@ -112,16 +123,18 @@ def get_nas_compression_data(
     data_loader:torch.utils.data.DataLoader, 
     metric_fun:Callable[[torch.Tensor, torch.Tensor], float], 
     calibration_data:torch.Tensor,
-    condition:Callable = lambda compressed_model, compression_config: True,
+    filter:Callable = lambda compressed_model, compression_config: True,
     device:str="cpu",
     num_data:int=100,
     train:bool=False,
     train_dataloader:Optional[torch.utils.data.DataLoader] = None,
     epochs:Optional[int] = None,
     criterion_fun:Optional[nn.Module] = None,
+    lr:float=1e-3,
     lr_scheduler:Optional[torch.optim.lr_scheduler.LRScheduler] = None,
     callbacks:List[Callable] = [],
     random_seed:Optional[int] = None,
+    two_step:bool=True
 ) -> Dict[str, List]:
     """
     Generates data for Neural Architecture Search (NAS) / Random Search.
@@ -141,8 +154,8 @@ def get_nas_compression_data(
 
     compression_config_data = defaultdict(list)
     
-    compression_possible_hp = model.get_commpression_possible_hyperparameters()
-    for _ in tqdm(range(num_data)):
+    compression_possible_hp = model.get_compression_possible_hyperparameters()
+    for _ in tqdm(range(num_data), desc=f"Generating NAS Data (1 - {num_data})"):
         # generating a random configuration
         valid = False
         while not valid:
@@ -160,10 +173,41 @@ def get_nas_compression_data(
                     device=device
                 )
 
-                valid = condition(compressed_model, compression_config_decode)
-        
+                valid = filter(compressed_model, compression_config_decode)
+
         if train:
-            optimizer_fun = torch.optim.SGD(compressed_model.parameters(), lr=1e-3, momentum=.9, weight_decay=5e-4)
+            if two_step:
+
+                prune_epochs = int(epochs/2)
+                epochs = epochs - prune_epochs
+
+                prune_config = copy.deepcopy(compression_config_decode)
+                del prune_config["quantize"]
+                pruned_model = model.init_compress(prune_config, input_shape, calibration_data=calibration_data, device=device)
+
+                optimizer_fun = torch.optim.SGD(pruned_model.parameters(), lr=lr, momentum=.9, weight_decay=5e-4)
+                lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_fun, mode="min", patience=1)
+
+                pruned_model.fit(
+                    train_dataloader=train_dataloader,
+                    epochs=epochs,
+                    criterion_fun=criterion_fun,
+                    optimizer_fun=optimizer_fun,
+                    lr_scheduler=lr_scheduler,
+                    validation_dataloader=data_loader,
+                    metrics={"metric": metric_fun},
+                    verbose=False,
+                    callbacks=callbacks,
+                    device=device,
+                )
+
+                compressed_model = pruned_model.init_compress(
+                    config=compression_config_decode,
+                    input_shape=input_shape, calibration_data=calibration_data,
+                    device=device
+                )
+                
+            optimizer_fun = torch.optim.SGD(compressed_model.parameters(), lr=lr, momentum=.9, weight_decay=5e-4)
             lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_fun, mode="min", patience=1)
 
             compressed_model.fit(
@@ -202,7 +246,8 @@ def get_size_of_compression(
 ):
     # helper to list all compression combinations
     num_valid_compressions = 0
-    search_space = model.get_commpression_possible_hyperparameters()
+    total_compressions = 0
+    search_space = model.get_compression_possible_hyperparameters()
     config_keys = list(search_space.keys())
     config_values = list(search_space.values())
     for combo in tqdm(itertools.product(*config_values)):
@@ -215,7 +260,8 @@ def get_size_of_compression(
         ):
             if condition(decode_config):
                 num_valid_compressions += 1
-    return num_valid_compressions
+            total_compressions += 1
+    return num_valid_compressions, total_compressions
 
 
 def brute_force_search_compression_config(
@@ -252,13 +298,9 @@ def brute_force_search_compression_config(
 
     best_config = None
 
-    search_space = model.get_commpression_possible_hyperparameters()
+    search_space = model.get_compression_possible_hyperparameters()
 
     # compute baseline size
-    original_size = model.get_size_in_bytes()
-    original_metric = estimator.predict({
-        config_key: config_values[0] for config_key, config_values in search_space.items()
-    })
 
     # helper to list all compression combinations
     def get_all_combinations(search_space):
@@ -276,7 +318,7 @@ def brute_force_search_compression_config(
     # iterate search space
     for compression_config in get_all_combinations(search_space):
         # predict metric
-        metric = estimator.predict(compression_config) / original_metric
+        metric = estimator.predict(compression_config)
 
         # create compressed model to get the model size
         compressed = model.init_compress(
@@ -284,8 +326,8 @@ def brute_force_search_compression_config(
             input_shape, calibration_data=calibration_data
         )
 
-        size = compressed.get_size_in_bytes() / original_size
-        ram = compressed.get_min_workspace_arena(input_shape) / 2
+        size = compressed.get_size_in_bytes()
+        ram = compressed.get_workspace_size(input_shape)
 
         # -------- HARD FILTERS --------
         if not condition(metric, size, ram, compression_config):
@@ -317,6 +359,7 @@ def evolutionary_search_compression_config(
     device:str="cpu",
     condition:Callable=lambda metric, size, ram, config: True,                 # list of conditions
     objective:Callable=lambda metric, size, ram, config: metric,                  # objective function, default objective = maximize metric
+    filter:Callable = lambda compressed_model, compression_config: True,
     maximize:bool=True,                   # maximize or minimize?
     verbose:bool=True,
     population_size:int=50,
@@ -331,7 +374,7 @@ def evolutionary_search_compression_config(
     """
 
     # Analyze Search Space
-    search_space = model.get_commpression_possible_hyperparameters()
+    search_space = model.get_compression_possible_hyperparameters()
 
     calibration_data = calibration_data.to(device=device)
     
@@ -339,21 +382,26 @@ def evolutionary_search_compression_config(
     param_values = list(search_space.values()) # List of lists of valid values
     
     # Pre-compute baseline stats
-    original_size = model.get_size_in_bytes()
-    original_metric = estimator.predict({
-        config_key: config_values[0] for config_key, config_values in zip(param_names, param_values)
-    })
 
     def create_individual():
         """Generate a random individual model compression"""
         valid = False
         while not valid:
             config = {config_key: random.choice(config_values) for config_key, config_values in zip(param_names, param_values)}
+            compression_config_decode = model.decode_compression_dict_hyperparameter(config)
             valid = model.is_compression_config_valid(
-                model.decode_compression_dict_hyperparameter(config), 
+                compression_config_decode, 
                 compression_keys=["quantize"], 
                 raise_error=False
             )
+            if valid:
+                compressed_model = model.init_compress(
+                    config=compression_config_decode,
+                    input_shape=input_shape, calibration_data=calibration_data,
+                    device=device
+                )
+
+                valid = filter(compressed_model, compression_config_decode)
         return config
 
     def evaluate(compression_config):
@@ -366,15 +414,15 @@ def evolutionary_search_compression_config(
         ):
             return (float("-inf") if maximize else float("inf")), [None, None, None]
         
-        metric = estimator.predict(compression_config) / original_metric
+        metric = estimator.predict(compression_config).item()
 
         compressed = model.init_compress(
             model.decode_compression_dict_hyperparameter(compression_config),
             input_shape, calibration_data=calibration_data, device=device
         )
 
-        size = compressed.get_size_in_bytes() / original_size
-        ram = compressed.get_min_workspace_arena(input_shape) / 2
+        size = compressed.get_size_in_bytes()
+        ram = compressed.get_workspace_size(input_shape)
 
         # -------- HARD FILTERS --------
         if not condition(metric, size, ram, model.decode_compression_dict_hyperparameter(compression_config)):
@@ -428,7 +476,7 @@ def evolutionary_search_compression_config(
                 best_overall_config = individual
                 best_overall_info = info
                 if verbose:
-                    print(f"Gen {gen}: ✔ New best! Obj={score:.4f} Metric={info[0]:.4f} Size={info[1]:.4f}")
+                    print(f"Gen {gen}: ✔ New best! Obj={score:.4f} Metric={info[0]:.4f} Size={info[1]:.4f} Ram={info[2]:.4f}")
 
         # Selection Pool
         selected = []
@@ -476,14 +524,22 @@ def evolutionary_search_compression_config(
         
         if verbose:
             valid_scores = [s for s in scores if s != float("inf") and s != float("-inf")]
-            avg_score = sum(valid_scores) / len(valid_scores) if valid_scores else 0
+            avg_score = sum(valid_scores) / len(valid_scores) if valid_scores else float("nan")
             print(f"Gen {gen}/{generations} Complete. Avg Score: {avg_score:.4f}")
+    try:
+        metric = best_overall_info[0]
+        size = best_overall_info[1]
+        ram = best_overall_info[2]
 
-    best_overall_info = {
-        "metric": best_overall_info[0],
-        "size": best_overall_info[1],
-        "ram": best_overall_info[2]
-    }
-    return best_overall_config, best_overall_info
+        best_overall_info = {
+            "metric": metric,
+            "size": size,
+            "ram": ram
+        }
+        return best_overall_config, best_overall_info
+    
+    except IndexError:
+        return None, [None, None, None]
+
                 
         
