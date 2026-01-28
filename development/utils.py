@@ -79,7 +79,9 @@ def get_quantize_scale_zero_point_assy(rmax, rmin, bitwidth) -> Tuple[torch.Tens
     qmin, qmax = get_bitwidth_range(bitwidth)
     scale = (rmax - rmin) / (qmax - qmin)
     scale_zero_index = (scale == 0)
-    scale[scale_zero_index] = 1
+    # setting the scale to be the rmax since the scale it is likely caused
+    # due to rmax == rmin 
+    scale[scale_zero_index] = rmax[scale_zero_index]
 
     # zero_point = torch.round(qmin - (rmin / scale))
     zero_point = round_ste(qmin - (rmin / scale))
@@ -103,7 +105,11 @@ def get_quantize_scale_per_tensor_sy(tensor_real: torch.Tensor,
     _, qmax = get_bitwidth_range(bitwidth)
     rmax = tensor_real.abs().max()
     scale = (rmax / qmax)
-    scale[scale == 0] = 1
+
+    scale_zero_index = (scale == 0)
+    # setting the scale to be the rmax since the scale it is likely caused
+    # due to rmax == rmin 
+    scale[scale_zero_index] = rmax[scale_zero_index]
     return scale
 
 def get_quantize_scale_zero_point_per_tensor_assy(tensor_real: torch.Tensor, 
@@ -124,8 +130,11 @@ def get_quantize_scale_zero_point_per_tensor_assy(tensor_real: torch.Tensor,
     rmax = tensor_real.max()
     
     scale = (rmax - rmin) / (qmax - qmin)
+
     scale_zero_index = (scale == 0)
-    scale[scale_zero_index] = 1
+    # setting the scale to be the rmax since the scale it is likely caused
+    # due to rmax == rmin 
+    scale[scale_zero_index] = rmax[scale_zero_index]
 
     # zero_point = torch.round(qmin - (rmin / scale))
     zero_point = round_ste(qmin - (rmin / scale))
@@ -149,7 +158,10 @@ def get_quantize_scale_per_channel_sy(tensor_real: torch.Tensor,
     _, qmax = get_bitwidth_range(bitwidth)
     rmax = tensor_real.abs().view(tensor_real.size(0), -1).max(dim=1)[0]
     scale = (rmax / qmax)
-    scale[scale == 0] = 1
+    scale_zero_index = (scale == 0)
+    # setting the scale to be the rmax since the scale it is likely caused
+    # due to rmax == rmin 
+    scale[scale_zero_index] = rmax[scale_zero_index]
     return scale
 
 def get_quantize_scale_zero_point_per_channel_assy(tensor_real: torch.Tensor, 
@@ -171,7 +183,9 @@ def get_quantize_scale_zero_point_per_channel_assy(tensor_real: torch.Tensor,
     
     scale = (rmax - rmin) / (qmax - qmin)
     scale_zero_index = (scale == 0)
-    scale[scale_zero_index] = 1
+    # setting the scale to be the rmax since the scale it is likely caused
+    # due to rmax == rmin 
+    scale[scale_zero_index] = rmax[scale_zero_index]
     
     zero_point = round_ste(qmin - (rmin / scale))
     # zero_point = torch.round(qmin - (rmin / scale))
