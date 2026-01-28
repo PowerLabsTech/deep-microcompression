@@ -505,9 +505,9 @@ class Sequential(nn.Sequential):
                         # Skip if layer cannot be pruned (
                         if self[name].get_prune_channel_possible_hyperparameters() is None:
                             continue
-                        if not isinstance(layer_sparsity, (float, int)):
+                        if not isinstance(layer_sparsity, (float, int, dict)):
                             if raise_error:
-                                raise TypeError(f"layer sparsity has to be of type of float or int not {type(layer_sparsity)} for layer {name}!")
+                                raise TypeError(f"layer sparsity has to be of type of float/int or dict is it is a Block layer  not {type(layer_sparsity)} for layer {name}!")
                             return False
                         if name not in self.names():
                             if raise_error:

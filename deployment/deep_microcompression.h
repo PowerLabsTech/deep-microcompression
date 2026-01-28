@@ -25,6 +25,7 @@
 // Layer Implementations
 #include "layers/activation.h"
 #include "layers/batchnorm.h"
+#include "layers/block.h"
 #include "layers/branch.h"
 #include "layers/conv.h"
 #include "layers/flatten.h"
