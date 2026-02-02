@@ -10,7 +10,6 @@ from tqdm.auto import tqdm
 import torch
 from torch import nn
 
-from .estimator import Estimator
 from .sequential import Sequential
 from ..layers import *
 
@@ -266,7 +265,7 @@ def get_size_of_compression(
 
 def brute_force_search_compression_config(
     model:Sequential,
-    estimator:Estimator,
+    estimator:nn.Module,
     input_shape:Tuple,
     calibration_data:torch.Tensor,
     condition:Callable=lambda metric, size, ram, config: True,                 # list of conditions
@@ -318,7 +317,7 @@ def brute_force_search_compression_config(
     # iterate search space
     for compression_config in get_all_combinations(search_space):
         # predict metric
-        metric = estimator.predict(compression_config)
+        metric = estimator(compression_config)
 
         # create compressed model to get the model size
         compressed = model.init_compress(
@@ -353,7 +352,7 @@ def brute_force_search_compression_config(
 
 def evolutionary_search_compression_config(
     model:Sequential,
-    estimator:Estimator,
+    estimator:nn.Module,
     input_shape:Tuple,
     calibration_data:torch.Tensor,
     device:str="cpu",
@@ -414,7 +413,7 @@ def evolutionary_search_compression_config(
         ):
             return (float("-inf") if maximize else float("inf")), [None, None, None]
         
-        metric = estimator.predict(compression_config).item()
+        metric = estimator(compression_config).item()
 
         compressed = model.init_compress(
             model.decode_compression_dict_hyperparameter(compression_config),
