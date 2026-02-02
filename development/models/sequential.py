@@ -587,19 +587,19 @@ class Sequential(nn.Sequential):
                     assert len(parameter_bitwidth) == len(granularity) and parameter_bitwidth.keys() == granularity.keys(), \
                             f"the keys of parameter_bitwidth has to match with that of granularity"
                     
-                    for (layer_bitwidth_name, layer_parameter_bitwidth), (_, layer_granularity) in zip(parameter_bitwidth.items(), granularity.items()):
+                    for (layer_name, layer_parameter_bitwidth), (_, layer_granularity) in zip(parameter_bitwidth.items(), granularity.items()):
                         # Skip if layer cannot be pruned (
                         if not isinstance(layer_parameter_bitwidth, int):
                             if raise_error:
-                                raise TypeError(f"layer parameter bitwidth has to be of type of int not {type(layer_sparsity)} for layer {name}!")
+                                raise TypeError(f"layer parameter bitwidth has to be of type of int not {type(layer_sparsity)} for layer {layer_name}!")
                             return False
                         if not isinstance(layer_granularity, QuantizationGranularity):
                             if raise_error:
-                                raise TypeError(f"layer granularity has to be of type QuantizationGranularity not {type(layer_sparsity)} for layer {name}!")
+                                raise TypeError(f"layer granularity has to be of type QuantizationGranularity not {type(layer_sparsity)} for layer {layer_name}!")
                             return False
-                        if layer_bitwidth_name not in self.names():
+                        if layer_name not in self.names():
                             if raise_error:
-                                raise NameError(f"Found unknown layer name {name}")
+                                raise NameError(f"Found unknown layer name {layer_name}")
                             return False
                         if layer_parameter_bitwidth not in [2, 4, 8]:
                             if raise_error:
