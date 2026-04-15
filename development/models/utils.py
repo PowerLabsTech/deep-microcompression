@@ -109,7 +109,7 @@ def convert_from_layer_torch_nn_to_dmc(module: nn.Module) -> Layer:
             copy_tensor(module.running_var, layer.running_var)
 
     elif isinstance(module, nn.Dropout):
-        return ReLU()
+        return module
     else:
         raise RuntimeError(f"module of type {type(module)} does not have a dmc equivalent yet.")
 

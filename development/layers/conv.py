@@ -58,10 +58,6 @@ class Conv2d(Layer, nn.Conv2d):
     def __init__(self, *args, **kwargs):
         """Initialize Conv2d layer with standard PyTorch parameters"""
         # Enforce usage of explicit pad instead of built-in padding arg
-        if "padding" in kwargs:
-            assert kwargs["padding"] == 0 or kwargs["padding"] == (0, 0), "Use padding module instead of padding to pad input"
-        else:
-            kwargs["padding"] = 0
 
         super().__init__(*args, **kwargs)
 
