@@ -388,15 +388,33 @@ class Dropout(Layer, nn.Dropout):
         return None
 
 
+
     def init_quantize(
-        self, 
-        parameter_bitwidth, 
-        granularity, scheme, 
-        activation_bitwidth=None, 
-        previous_output_quantize = None,
-        current_output_quantize: Optional[Quantize] = None,
-    ):
-        pass
+            self, 
+            parameter_bitwidth, 
+            granularity, scheme, 
+            activation_bitwidth=None, 
+            previous_output_quantize = None,
+            current_output_quantize: Optional[Quantize] = None,
+        ):
+        """Configures quantization for integer clamping."""
+        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
+        if scheme == QuantizationScheme.STATIC:
+            # raise RuntimeError("Can not perform static quantization with ReLU6, fuse the model first!")
+            assert activation_bitwidth is not None, "Pass an activation bitwidth when doing static quantization"
+            if current_output_quantize is None:
+                quantization_base = previous_output_quantize
+            else:
+                quantization_base = current_output_quantize
+                warnings.warn(
+                    (f"{self} recieved a curent_output_quantize, this forces it to use that as the quantization base and not the previous"
+                    " layer's quantizer, this is likely to using it in a branch with a modifying layer, Linear or Conv.")
+                )
+            setattr(self, "input_quantize", Quantize(
+                self, activation_bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC, base=[quantization_base]
+            ))
+            return quantization_base
+
     
     def get_quantize_possible_hyperparameters(self):
         return None
