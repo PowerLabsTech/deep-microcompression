@@ -140,11 +140,10 @@ class Sequential(nn.Sequential):
             for layer in other:
                 result.add_layer(layer=layer)        
             return result
-        elif isinstance(other, Layer):
-            result.add_layer(other) 
-
+        elif isinstance(other, (Layer, nn.Module)):
+            result.add_layer(other)
             return result
-        raise RuntimeError(f"cannot add type{other} to Sequential")
+        raise RuntimeError(f"cannot add type {other} to Sequential")
     
     def add_layer(self, layer: Union[Layer, nn.Module], name: str="") -> None:
         """

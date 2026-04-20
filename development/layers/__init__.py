@@ -1,4 +1,4 @@
-from .activation import ReLU, ReLU6
+from .activation import ReLU, ReLU6, Dropout
 from .batchnorm import BatchNorm2d
 from .branch import Branch
 from .block import Block
@@ -19,6 +19,7 @@ __all__ = [
     "Branch",
     "Conv2d",
     "ConstantPad2d",
+    "Dropout",
     "Flatten",
     "Linear",
     "Layer",

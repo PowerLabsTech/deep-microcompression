@@ -356,3 +356,91 @@ class ReLU6(Layer, nn.ReLU6):
         
         return layer_header, layer_def, layer_param_def
     
+
+class Dropout(Layer, nn.Dropout):
+
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, input):
+        """Forward pass with quantization awareness"""
+        return super().forward(input)
+    
+
+    @torch.no_grad()
+    def init_prune_channel(
+        self, 
+        sparsity: float, 
+        input_shape: torch.Size,
+        keep_prev_channel_index:Optional[torch.Tensor], 
+        keep_current_channel_index:Optional[torch.Tensor],
+        is_output_layer: bool = False, 
+        metric: str = "l2"
+    ):
+        # Propagate channel indices (Structured Pruning Support)
+        if keep_current_channel_index is None:
+            return keep_prev_channel_index
+        return keep_current_channel_index
+
+
+    def get_prune_channel_possible_hyperparameters(self):
+        return None
+
+
+
+    def init_quantize(
+            self, 
+            parameter_bitwidth, 
+            granularity, scheme, 
+            activation_bitwidth=None, 
+            previous_output_quantize = None,
+            current_output_quantize: Optional[Quantize] = None,
+        ):
+        """Configures quantization for integer clamping."""
+        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
+        if scheme == QuantizationScheme.STATIC:
+            # raise RuntimeError("Can not perform static quantization with ReLU6, fuse the model first!")
+            assert activation_bitwidth is not None, "Pass an activation bitwidth when doing static quantization"
+            if current_output_quantize is None:
+                quantization_base = previous_output_quantize
+            else:
+                quantization_base = current_output_quantize
+                warnings.warn(
+                    (f"{self} recieved a curent_output_quantize, this forces it to use that as the quantization base and not the previous"
+                    " layer's quantizer, this is likely to using it in a branch with a modifying layer, Linear or Conv.")
+                )
+            setattr(self, "input_quantize", Quantize(
+                self, activation_bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC, base=[quantization_base]
+            ))
+            return quantization_base
+
+    
+    def get_quantize_possible_hyperparameters(self):
+        return None
+    
+    def get_size_in_bits(self):
+        if self.is_quantized:
+            if hasattr(self, "input_quantize"):
+                return get_size_in_bits(self.input_quantize.zero_point)*2
+        return 0
+
+    def get_compression_parameters(self):
+        # Nothing to do 
+        pass
+
+
+    def get_workspace_size(self, input_shape, data_per_byte) -> int:
+        return math.ceil(input_shape.numel() / data_per_byte)\
+            + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte)
+
+
+    def get_output_tensor_shape(self, input_shape):
+        # Nothing to do
+        return input_shape
+    
+    
+
+    @torch.no_grad()
+    def convert_to_c(self, var_name, input_shape, for_arduino=False):
+        pass
