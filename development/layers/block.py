@@ -83,6 +83,7 @@ class Block(Layer, nn.Module):
 
     def forward(self, input):
         for layer in self.layers():
+            # print(f"Block Layer {layer.__class__.__name__} {input.shape}")
             input = layer(input)
         return input
     
@@ -117,14 +118,6 @@ class Block(Layer, nn.Module):
 
 
 
-    def get_prune_channel_possible_hyperparameters(self):
-        return None
-    
-    def get_quantize_possible_hyperparameters(self):
-        return None
-
-
-
     def init_quantize(
         self, 
         parameter_bitwidth: int, 
@@ -141,19 +134,32 @@ class Block(Layer, nn.Module):
                 layer.init_quantize(parameter_bitwidth, scheme, granularity)
             return
 
-        previous_output_quantize = self.input_quantize
+        # previous_output_quantize = self.input_quantize
         for layer in self.layers():
-            previous_output_quantize = layer.init_quantize(bitwidth, scheme, granularity, previous_output_quantize)
+            previous_output_quantize = layer.init_quantize(
+                parameter_bitwidth, granularity, 
+                scheme, activation_bitwidth, previous_output_quantize, 
+                current_output_quantize=None
+            )
 
         if hasattr(self[-1], "output_quantize"):
-            return self[-1].output_quantize 
-        return None
+            # return self[-1].output_quantize
+            assert self[-1].output_quantize == previous_output_quantize
+            # print(f"Block has output quantize has {self[-1].output_quantize}, {previous_output_quantize}")
+        return previous_output_quantize
 
 
     
     def get_prune_channel_possible_hyperparameters(self):
-        return self.sublayer1.get_prune_channel_possible_hyperparameters()
+        # TODO: Currently using a simple heuristic, 
+        # this is not correct because the other layers might have different possible hyperparameters
+        return list(self.layers())[0].get_prune_channel_possible_hyperparameters()
 
+
+    
+    def get_quantize_possible_hyperparameters(self):
+        # TODO: Fix this to return the possible hyperparameters for all layers
+        return list(self.layers())[0].get_quantize_possible_hyperparameters()
 
     def get_compression_parameters(self):
         return
