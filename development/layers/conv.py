@@ -368,8 +368,8 @@ class Conv2d(Layer, nn.Conv2d):
         dH, dW = _pair(self.dilation)
         pH, pW = _pair(self.padding)
         
-        H_out = ((H_in +  pH - dH * (kH - 1) - 1) // sH) + 1
-        W_out = ((W_in +  pW - dW * (kW - 1) - 1) // sW) + 1
+        H_out = ((H_in + 2 * pH - dH * (kH - 1) - 1) // sH) + 1
+        W_out = ((W_in + 2 * pW - dW * (kW - 1) - 1) // sW) + 1
         
         return torch.Size((C_out, H_out, W_out))
     
