@@ -43,7 +43,7 @@ class Branch(Layer, nn.Module):
 
         if (sublayer1 not in self.NON_OUTPUT_MODIFYING_LAYERS and (sublayer2 in self.NON_OUTPUT_MODIFYING_LAYERS or sublayer2 is None)) or \
             sublayer2 not in self.NON_OUTPUT_MODIFYING_LAYERS and sublayer1 in self.NON_OUTPUT_MODIFYING_LAYERS:
-            warnings.warn((f"sublayer 1 of type {type(sublayer1)} and sublayer2 {sublayer2} have only one of them a "
+            warnings.warn((f"sublayer 1 of type {type(sublayer1)} and sublayer2 {sublayer2} have only one of them"
                            "as a compression parameter modifying layer (it recomputes its parameters) like Linear or Conv"
                             " but the other uses the parameters from the previous layers, this will result in the modifying"
                             f" layer having it parameters tied to that of the non modifying layer."))
@@ -120,10 +120,10 @@ class Branch(Layer, nn.Module):
             input_shape2 = self.sublayer2.get_output_tensor_shape(torch.Size(input_shape))
         else:
             input_shape2 = input_shape
- 
+
         assert input_shape1 == input_shape2, (
-            f"The output shape of output of submodule1 {input_shape1}"
-            f" and submodule2 {input_shape2} aren't the same after pruning."
+            f"The output shape of output of submodule1 ({self.sublayer1}) {input_shape1}"
+            f" and submodule2 ({self.sublayer2}) {input_shape2} aren't the same after pruning."
         )
 
         return keep_prev_channel_index1
@@ -148,9 +148,6 @@ class Branch(Layer, nn.Module):
 
         assert previous_output_quantize is not None, "Pass a quantizer for the input, it is usually from the preceeding layer."
         assert activation_bitwidth is not None, "Pass in a activation bitwidth when do static quantization"
-        # setattr(self, "output_quantize", Quantize(
-        #     self, activation_bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC
-        # ))
 
         # To force both layers to have the same quantization scale and zeropoint to make the addition simpler
         if isinstance(self.sublayer2, self.NON_OUTPUT_MODIFYING_LAYERS) or self.sublayer2 is None:
@@ -159,7 +156,6 @@ class Branch(Layer, nn.Module):
         next_output_quantize1 = self.sublayer1.init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize, current_output_quantize)
         if self.sublayer2:
             next_output_quantize2 = self.sublayer2.init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize, next_output_quantize1)
-            print(len(next_output_quantize2.base), next_output_quantize1.base)
             assert len(next_output_quantize2.base) == 1 and (
                 next_output_quantize1 == next_output_quantize2.base[0] or 
                 next_output_quantize1.base[0] == next_output_quantize2.base[0]
@@ -175,7 +171,8 @@ class Branch(Layer, nn.Module):
         return self.sublayer1.get_prune_channel_possible_hyperparameters()
 
     def get_quantize_possible_hyperparameters(self):
-        return None
+        # TODO: Fix this to return the possible hyperparameters for both sublayers
+        return self.sublayer1.get_quantize_possible_hyperparameters()
 
 
     def get_compression_parameters(self):
