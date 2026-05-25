@@ -35,6 +35,8 @@ from torch.utils import data
 from ..layers.layer import Layer
 from ..layers.activation import ReLU, ReLU6
 from ..layers.batchnorm import BatchNorm2d
+from ..layers.block import Block
+from ..layers.branch import Branch
 from ..layers.conv import Conv2d
 from ..layers.flatten import Flatten
 from ..layers.linear import Linear
@@ -510,7 +512,7 @@ class Sequential(nn.Sequential):
                 # For non uniform pruning, 
                 elif isinstance(sparsity, dict):
                     for name, layer_sparsity in sparsity.items():
-                        # Skip if layer cannot be pruned (
+                        # Skip if layer cannot be pruned
                         if self[name].get_prune_channel_possible_hyperparameters() is None:
                             continue
                         if not isinstance(layer_sparsity, (float, int, dict)):
@@ -837,64 +839,92 @@ class Sequential(nn.Sequential):
         Returns:
             A new Sequential model with fused layers.
         """
-        names_layers = list(self.names_layers())
 
-        fused_model = Sequential()
 
         # Helper to preserve DMC metadata (pruning masks/quantization config) 
         # when transferring to the new fused layer instance.
-        def add_fused_layer(name, layer, fused_layer=None):
+        def add_fused_layer(name, layer, fused_model, fused_layer=None):
             if fused_layer is not None:
                 init_dmc_parameter(layer, fused_layer)
                 fused_model.add_module(name, fused_layer) 
             else:
                 fused_model.add_module(name, layer) 
 
-        current_name, current_layer = names_layers[0]
-        for next_name, next_layer in names_layers[1:]:
-            is_fused = False
-            if isinstance(current_layer, Conv2d):
-                if isinstance(next_layer, BatchNorm2d):
-                    fused_layer = fuse_conv2d_batchnorm2d(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True                     
-                elif isinstance(next_layer, ReLU) and not batchnorm_only:
-                    fused_layer = fuse_conv2d_relu(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True                     
-                elif isinstance(next_layer, ReLU6) and not batchnorm_only:
-                    fused_layer = fuse_conv2d_relu6(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True                     
+        def fuse_container(container: Union[Sequential, Block, Branch]) -> Union[Sequential, Block, Branch]:
 
-            elif isinstance(current_layer, Linear):
-                if isinstance(next_layer, ReLU)  and not batchnorm_only:
-                    fused_layer = fuse_linear_relu(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True                     
-                elif isinstance(next_layer, ReLU6) and not batchnorm_only:
-                    fused_layer = fuse_linear_relu6(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True            
+            if not isinstance(container, (Sequential, Block, Branch)):
+                return container
+                
+            names_layers = list(container.names_layers())
 
-            # Update pointer for next iteration
-            if is_fused:
-                current_layer = fused_layer
+            if isinstance(container, Sequential):
+                fused_model = Sequential()
+            elif isinstance(container, Block):
+                fused_model = Block()
+            elif isinstance(container, Branch):
+                pass
             else:
-                fused_model.add_module(current_name, current_layer)
-                current_layer = next_layer
-                current_name = next_name
-            
-        fused_model.add_module(current_name, current_layer)
+                raise ValueError(f"Unsupported container type: {type(container)}")
 
-        init_dmc_parameter(self, fused_model)
-        
+            current_name, current_layer = names_layers[0]
+            for next_name, next_layer in names_layers[1:]:
+                is_fused = False
+
+                if isinstance(current_layer, (Sequential, Block)):
+                    current_layer = fuse_container(current_layer)
+
+                elif isinstance(current_layer, Branch):
+                    current_layer = Branch(
+                        sublayer1=fuse_container(current_layer.sublayer1),
+                        sublayer2=fuse_container(current_layer.sublayer2) if current_layer.sublayer2 is not None else None
+                    )
+                
+                if isinstance(current_layer, Conv2d):
+                    if isinstance(next_layer, BatchNorm2d):
+                        fused_layer = fuse_conv2d_batchnorm2d(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True                     
+                    elif isinstance(next_layer, ReLU) and not batchnorm_only:
+                        fused_layer = fuse_conv2d_relu(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True                     
+                    elif isinstance(next_layer, ReLU6) and not batchnorm_only:
+                        fused_layer = fuse_conv2d_relu6(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True                     
+
+                elif isinstance(current_layer, Linear):
+                    if isinstance(next_layer, ReLU)  and not batchnorm_only:
+                        fused_layer = fuse_linear_relu(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True                     
+                    elif isinstance(next_layer, ReLU6) and not batchnorm_only:
+                        fused_layer = fuse_linear_relu6(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True            
+
+                # Update pointer for next iteration
+                if is_fused:
+                    current_layer = fused_layer
+                else:
+                    fused_model.add_module(current_name, current_layer)
+                    current_layer = next_layer
+                    current_name = next_name
+                
+            fused_model.add_module(current_name, current_layer)
+
+            init_dmc_parameter(container, fused_model)
+            
+            return fused_model
+
+        fused_model = fuse_container(self)
+            
         if device:
             fused_model.to(device=device)
 
         return fused_model
 
-        
+
     def get_size_in_bits(self) -> int:
         """Calculates total model size in bits (Sum of all packed layers)."""
         size = 0
