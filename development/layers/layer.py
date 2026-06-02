@@ -1,8 +1,10 @@
+import warnings
 from abc import ABC, abstractmethod
-from typing import Tuple, Union, Optional, Any
+from typing import Optional
 
 from ..compressors import QuantizationScheme, QuantizationGranularity, Quantize
 import torch
+
 
 class Layer(ABC):
     """
@@ -19,62 +21,61 @@ class Layer(ABC):
         """
         setattr(self, "_dmc", dict())
         super().__init__(*args, **kwargs)
-
-        # Flag: (Structured Pruning) is active
         self.is_pruned_channel = False
-        
-        # Flag: (Quantization) is active
         self.is_quantized = False
 
     @property
     def is_compressed(self):
         """Returns True if any optimization pass has been applied."""
         return self.is_pruned_channel or self.is_quantized
-    
-    @abstractmethod
+
+    # ------------------------------------------------------------------
+    # Pruning interface
+    # ------------------------------------------------------------------
+
     def init_prune_channel(
-        self, 
-        sparsity: float, 
+        self,
+        sparsity: float,
         input_shape: torch.Size,
-        keep_prev_channel_index: Optional[torch.Tensor], 
-        keep_current_channel_index:Optional[torch.Tensor],
-        is_output_layer: bool = False, 
-        metric: str = "l2"
+        keep_prev_channel_index: Optional[torch.Tensor],
+        keep_current_channel_index: Optional[torch.Tensor],
+        is_output_layer: bool = False,
+        metric: str = "l2",
     ) -> Optional[torch.Tensor]:
         """
-        Structured Pruning Setup.
-        
-        Must implement the logic to:
-        1. Calculate filter importance (e.g., L1/L2 norm).
-        2. Generate binary masks for weights.
-        3. Handle dependency propagation (return indices of kept channels).
+        Default: passthrough — layers with no learnable weights just forward indices.
+        Learnable layers (Conv2d, Linear) override this to compute importance and build masks.
         """
-        pass
-    
-    @abstractmethod
+        if keep_current_channel_index is None:
+            return keep_prev_channel_index
+        return keep_current_channel_index
+
     def get_prune_channel_possible_hyperparameters(self):
         """
-        Returns the valid range of channels that can be kept (for Search/NAS).
-        Used to generate the Sensitivity Analysis graphs.
+        Returns valid pruning search space, or None if the layer is not prunable.
+        Overridden by Conv2d and Linear to return range(out_channels/out_features).
         """
-        pass
+        return None
 
+    # ------------------------------------------------------------------
+    # Quantization interface
+    # ------------------------------------------------------------------
 
-    @abstractmethod
     def init_quantize(
-        self, 
-        parameter_bitwidth, 
-        granularity, scheme, 
-        activation_bitwidth=None, 
-        previous_output_quantize = None,
+        self,
+        parameter_bitwidth,
+        granularity,
+        scheme,
+        activation_bitwidth=None,
+        previous_output_quantize=None,
         current_output_quantize: Optional[Quantize] = None,
     ):
         """
-        Quantization Setup.
-        
-        Must implement the logic to:
-        1. Attach Input/Weight/Output quantization observers.
-        2. Propagate scale factors from the previous layer (for static inference).
+        Stores quantization config in _dmc and propagates the output quantizer.
+
+        Default (passthrough): returns current_output_quantize if provided, otherwise
+        previous_output_quantize. Learnable layers (Conv2d, Linear) override this to
+        attach weight/input/output quantizers and return a new output quantizer.
         """
         if "quantize" not in self.__dict__["_dmc"]:
             self.__dict__["_dmc"]["quantize"] = dict()
@@ -83,25 +84,31 @@ class Layer(ABC):
         self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"] = parameter_bitwidth
         self.__dict__["_dmc"]["quantize"]["activation_bitwidth"] = activation_bitwidth
 
-        pass
+        if current_output_quantize is None:
+            return previous_output_quantize
+        warnings.warn(
+            f"{self} received a current_output_quantize, forcing it to use that as the "
+            "quantization base instead of the previous layer's quantizer. This is expected "
+            "when the layer sits inside a Branch alongside a modifying layer (Conv/Linear).",
+            UserWarning,
+            stacklevel=2,
+        )
+        return current_output_quantize
 
-
-    @abstractmethod
     def get_quantize_possible_hyperparameters(self):
-        return {
-            "parameter_bitwidth": [8, 4, 2], 
-            "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL]
-        }
-    
+        """
+        Returns valid quantization search space, or None if the layer has no parameters.
+        Overridden by Conv2d and Linear to return bitwidth/granularity options.
+        """
+        return None
+
+    # ------------------------------------------------------------------
+    # Export / sizing interface (all abstract — every layer must implement)
+    # ------------------------------------------------------------------
 
     @abstractmethod
     def get_compression_parameters(self):
-        """
-        Retrieves the final compressed parameters (Weights/Biases).
-        
-        This method must apply all active pruning masks and simulation steps 
-        to return the exact tensors that will be exported to C.
-        """
+        """Returns final hard-pruned and hard-quantized tensors for C export."""
         pass
 
     @abstractmethod
@@ -110,43 +117,21 @@ class Layer(ABC):
 
     @abstractmethod
     def get_size_in_bits(self) -> int:
-        """Calculates the theoretical size of the layer in bits."""
+        """Calculates the theoretical compressed size of the layer in bits."""
         pass
 
     def get_size_in_bytes(self):
         return self.get_size_in_bits() // 8
-    
+
     def get_size_in_KB(self):
         return self.get_size_in_bits() / (8 * 1024)
 
-
     @abstractmethod
     def get_output_tensor_shape(self, input_shape):
-        """
-        Calculates output dimensions.
-        
-        Crucial for the "Ping-Pong" SRAM estimation (`get_max_workspace_arena`).
-        Must return: (Max_Intermediate_Shape, Final_Output_Shape).
-        """
+        """Calculates output dimensions — used for Ping-Pong SRAM estimation."""
         pass
 
     @abstractmethod
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
-        """
-        Deployment Generation.
-
-        Args:
-
-            var_name: Variable name to use in generated code
-            input_shape: Shape of the input tensor
-            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
-        
-        Must implement:
-        1. Bit-Packing for weights.
-        2. C struct definition generation.
-        3. Parameter array hex dumping.
-        """
+        """Generates C header, definition, and parameter strings for bare-metal deployment."""
         pass
-
-
-
