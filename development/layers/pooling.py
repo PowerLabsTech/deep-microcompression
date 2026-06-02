@@ -1,361 +1,143 @@
 """
 @file pooling.py
-@brief PyTorch implementation of MaxPool2d layer with support for:
-    1. Standard max pooling operation
-    2. Static quantization (per-tensor and per-channel)
-    3. C code generation for deployment
-"""
-"""
-@file pooling.py
 @brief Pooling Layers (MaxPool2d, AvgPool2d) for DMC Pipeline.
 
-In the Deep Microcompression framework, pooling layers play a passive but critical role:
-1.  Structure Preservation: They must propagate pruning indices.
-    If Channel $k$ is pruned in `Conv_1`, then Channel $k$ in `MaxPool_1` is also dead,
-    and this information must be passed to `Conv_2`.
-2.  Quantization Pass-Through: MaxPool preserves quantization
-    scales (max of integers is effectively the same scale). AvgPool requires
-    re-quantization support (not implemented here, assumed fused or float fallback).
+In the Deep Microcompression framework, pooling layers are passive pass-throughs:
+1. Structure Preservation: propagate pruning indices unchanged.
+2. Quantization Pass-Through: MaxPool preserves quantization scales; AvgPool
+   relies on float fallback or the C-library's handling.
 """
 
 import math
-import warnings
 from typing import Union, Optional
 
 import torch
 from torch import nn
 
 from .layer import Layer
-from ..compressors import Quantize, QuantizationScheme
+from ..compressors import Quantize, QuantizationScheme, QuantizationBitWidthError
 from ..utils import (
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
-    ACTIVATION_BITWIDTH_2
+    ACTIVATION_BITWIDTH_2,
 )
+
+
+def _pool_output_shape(input_shape, kernel_size, stride, padding):
+    """Shared spatial output-shape calculation for MaxPool2d and AvgPool2d."""
+    C, H_in, W_in = input_shape
+
+    def _pair(x):
+        return x if isinstance(x, tuple) else (x, x)
+
+    kH, kW = _pair(kernel_size)
+    sH, sW = _pair(stride or kernel_size)  # PyTorch uses kernel_size as default stride
+    pH, pW = _pair(padding)
+
+    H_out = ((H_in + 2 * pH - kH) // sH) + 1
+    W_out = ((W_in + 2 * pW - kW) // sW) + 1
+    return torch.Size((C, H_out, W_out))
+
+
+def _pool_convert_to_c(layer, var_name, input_shape):
+    """Shared C-code generator for MaxPool2d and AvgPool2d."""
+    input_channel_size, input_row_size, input_col_size = input_shape
+    kernel_size = layer.kernel_size
+    stride = layer.stride
+    padding = layer.padding
+
+    scheme = None
+    if layer.is_quantized and "quantize" in layer.__dict__["_dmc"]:
+        scheme = layer.__dict__["_dmc"]["quantize"]["scheme"]
+
+    if scheme != QuantizationScheme.STATIC:
+        layer_def = (
+            f"{layer.__class__.__name__} {var_name}("
+            f"{input_channel_size}, {input_row_size}, {input_col_size}, "
+            f"{kernel_size}, {stride}, {padding});\n"
+        )
+        layer_header = f"extern {layer.__class__.__name__} {var_name};\n\n"
+    else:
+        activation_bitwidth = layer.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
+        if activation_bitwidth == 8:
+            quantize_property = ACTIVATION_BITWIDTH_8
+        elif activation_bitwidth == 4:
+            quantize_property = ACTIVATION_BITWIDTH_4
+        elif activation_bitwidth == 2:
+            quantize_property = ACTIVATION_BITWIDTH_2
+        else:
+            raise QuantizationBitWidthError(activation_bitwidth)
+
+        layer_def = (
+            f"{layer.__class__.__name__}_SQ {var_name}("
+            f"{input_channel_size}, {input_row_size}, {input_col_size}, "
+            f"{kernel_size}, {stride}, {padding}, {quantize_property});\n"
+        )
+        layer_header = f"extern {layer.__class__.__name__}_SQ {var_name};\n\n"
+
+    return layer_header, layer_def, ""
+
 
 class MaxPool2d(Layer, nn.MaxPool2d):
     """
     DMC-aware MaxPool2d layer.
-    
-    Responsibilities:
-    1.  Pruning Coordination: Forwards 'keep_channel_mask' unchanged.
-    2.  Quantization: Inherits scale/zero-point from previous layer (Max operation
-        on quantized int8 values works identical to float values).
-    3.  C-Generation: Exports kernel/stride/padding parameters for the bare-metal loop.
+
+    Forwards pruning indices and quantization scale unchanged — max over integers
+    is identical to max over floats at the same scale, so no re-quantization needed.
     """
 
     def __init__(self, *args, **kwargs):
-        """Initialize MaxPool2d layer with standard PyTorch parameters"""
         super().__init__(*args, **kwargs)
 
     def forward(self, input):
-        """
-        Note: Since MaxPool operates on individual values, it natively supports 
-        Quantized Integers without modification (Max(int8) is valid).
-        """
         return super().forward(input)
-
-    @torch.no_grad()
-    def init_prune_channel(
-        self, 
-        sparsity: float, 
-        input_shape: torch.Size,
-        keep_prev_channel_index:Optional[torch.Tensor], 
-        keep_current_channel_index:Optional[torch.Tensor],
-        is_output_layer: bool = False, 
-        metric: str = "l2"
-    ) -> Optional[torch.Tensor]:
-        """Placeholder for channel pruning (MaxPool doesn't have weights to prune)"""
-        if keep_current_channel_index is None:
-            return keep_prev_channel_index
-        return keep_current_channel_index
-
-
-    def get_prune_channel_possible_hyperparameters(self):
-        return None
-
-
-
-    def init_quantize(
-        self, 
-        parameter_bitwidth, 
-        granularity, scheme, 
-        activation_bitwidth=None, 
-        previous_output_quantize = None,
-        current_output_quantize: Optional[Quantize] = None,
-    ):
-        """
-        Pass-through for Quantization Observers.
-        
-        Max Pooling does not alter the dynamic range of data, so the 
-        input scale/zero-point is valid for the output.
-        """
-        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
-        if current_output_quantize is None:
-            return previous_output_quantize
-        warnings.warn(
-            (f"{self} recieved a curent_output_quantize, this forces it to use that as the quantization base and not the previous"
-            " layer's quantizer, this is likely to using it in a branch with a modifying layer, Linear or Conv.")
-        )
-        return current_output_quantize
-
-
-
-    def get_quantize_possible_hyperparameters(self):
-        return None
-    
 
     def get_size_in_bits(self):
         return 0
 
-
     def get_compression_parameters(self):
-        #Nothing to do
         pass
 
-
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)\
-            + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte)
-    
+        return (math.ceil(input_shape.numel() / data_per_byte)
+                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
 
     def get_output_tensor_shape(self, input_shape):
-        """
-        Calculates output spatial dimensions.
-        Used for SRAM workspace estimation (Section IV-A-3).
-        """
-        C, H_in, W_in = input_shape
-        
-        def _pair(x): return x if isinstance(x, tuple) else (x, x)
-        
-        kH, kW = _pair(self.kernel_size)
-        sH, sW = _pair(self.stride or self.kernel_size)  # PyTorch uses kernel_size as default if stride is None
-        pH, pW = _pair(self.padding)
-        
-        # print(H_in, pH, kW, sW, self.kernel_size, self.stride, self.padding, self.dilation, isinstance(self.kernel_size, tuple))
-        
-        H_out = ((H_in + 2 * pH - kH) // sH) + 1
-        W_out = ((W_in + 2 * pW - kW) // sW) + 1
-        
-        return torch.Size((C, H_out, W_out))
-    
+        return _pool_output_shape(input_shape, self.kernel_size, self.stride, self.padding)
 
     @torch.no_grad()
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
-        """
-        Generates C code for bare-metal deployment.
-
-        Args:
-            var_name: Variable name to use in generated code
-            input_shape: Shape of the input tensor
-            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
-        
-        Exports structural parameters (Kernel, Stride, Padding) so the 
-        generic C implementation can execute the loop.
-        """
-        input_channel_size, input_row_size, input_col_size = input_shape
-        kernel_size = self.kernel_size
-        stride = self.stride
-        padding = self.padding
-
-        scheme = None
-        if self.is_quantized and "quantize" in self.__dict__["_dmc"]:
-            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
-
-        if scheme != QuantizationScheme.STATIC:
-
-            layer_def = (
-                f"{self.__class__.__name__} {var_name}("
-                f"{input_channel_size}, {input_row_size}, {input_col_size}, "
-                f"{kernel_size}, {stride}, {padding});\n"
-            )
-            layer_header = f"extern {self.__class__.__name__} {var_name};\n\n"
-        else:
-
-            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
-            activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
-
-            quantize_property = ""
-
-            if activation_bitwidth == 8:
-                quantize_property += ACTIVATION_BITWIDTH_8
-            elif activation_bitwidth == 4:
-                quantize_property += ACTIVATION_BITWIDTH_4
-            elif activation_bitwidth == 2:
-                quantize_property += ACTIVATION_BITWIDTH_2
-            else:
-                raise QuantizationBitWidthError
-            
-            layer_def = (
-                f"{self.__class__.__name__}_SQ {var_name}("
-                f"{input_channel_size}, {input_row_size}, {input_col_size}, "
-                f"{kernel_size}, {stride}, {padding}, {quantize_property});\n"
-            )
-            layer_header = f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
-
-        layer_param_def = ""
-
-        return layer_header, layer_def, layer_param_def
-    
-
+        return _pool_convert_to_c(self, var_name, input_shape)
 
 
 class AvgPool2d(Layer, nn.AvgPool2d):
     """
     DMC-aware AvgPool2d layer.
-    
-    Note on Quantization: Average Pooling introduces non-integer values (sums/count).
-    In a strict integer-only pipeline (Static Quantization), this requires 
-    rescaling. The current implementation relies on the C-library's handling 
-    or assumes float fallback for AvgPool layers.
+
+    Note on Quantization: Average Pooling introduces non-integer values (sum/count).
+    In a strict integer-only pipeline, this requires rescaling. The current
+    implementation relies on the C-library's handling or assumes float fallback.
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def forward(self, input):
-        """Forward pass through max pooling layer
-        
-        Args:
-            input: Input tensor (float or quantized)
-            
-        Returns:
-            Max pooled output tensor
-        """
         return super().forward(input)
-
-    @torch.no_grad()
-    def init_prune_channel(
-        self, 
-        sparsity: float, 
-        input_shape: torch.Size,
-        keep_prev_channel_index:Optional[torch.Tensor], 
-        keep_current_channel_index:Optional[torch.Tensor],
-        is_output_layer: bool = False, 
-        metric: str = "l2"
-    ) -> Optional[torch.Tensor]:
-        
-        """Placeholder for channel pruning (MaxPool doesn't have weights to prune)"""
-        # Nothing to do
-        if keep_current_channel_index is None:
-            return keep_prev_channel_index
-        return keep_current_channel_index
-
-
-    def get_quantize_possible_hyperparameters(self):
-        return None
-    
-
-    def init_quantize(
-        self, 
-        parameter_bitwidth, 
-        granularity, scheme, 
-        activation_bitwidth=None, 
-        previous_output_quantize = None,
-        current_output_quantize: Optional[Quantize] = None,
-    ):
-        """
-        Pass-through for Quantization Observers.
-        
-        Avg Pooling does not alter the dynamic range of data, so the 
-        input scale/zero-point is valid for the output.
-        """
-        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
-        if current_output_quantize is None:
-            return previous_output_quantize
-        warnings.warn(
-            (f"{self} recieved a curent_output_quantize, this forces it to use that as the quantization base and not the previous"
-            " layer's quantizer, this is likely to using it in a branch with a modifying layer, Linear or Conv.")
-        )
-        return current_output_quantize
-
-
-    def get_prune_channel_possible_hyperparameters(self):
-        return None
-    
 
     def get_size_in_bits(self):
         return 0
 
-
     def get_compression_parameters(self):
-        #Nothing to do
         pass
 
-
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)\
-            + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte)
+        return (math.ceil(input_shape.numel() / data_per_byte)
+                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
 
     def get_output_tensor_shape(self, input_shape):
-        
-        C, H_in, W_in = input_shape
-        
-        def _pair(x): return x if isinstance(x, tuple) else (x, x)
-        
-        kH, kW = _pair(self.kernel_size)
-        sH, sW = _pair(self.stride or self.kernel_size)  # PyTorch uses kernel_size as default if stride is None
-        pH, pW = _pair(self.padding)
-        
-        # print(H_in, pH, kW, sW, self.kernel_size, self.stride, self.padding, self.dilation, isinstance(self.kernel_size, tuple))
-        
-        H_out = ((H_in + 2 * pH - kH) // sH) + 1
-        W_out = ((W_in + 2 * pW - kW) // sW) + 1
-
-        return torch.Size((C, H_out, W_out))
-    
+        return _pool_output_shape(input_shape, self.kernel_size, self.stride, self.padding)
 
     @torch.no_grad()
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
-        """Generate C code declarations for this layer
-        
-        Args:
-            var_name: Variable name to use in generated code
-            input_shape: Shape of the input tensor
-            for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
-
-        Returns:
-            Tuple of (header declaration, layer definition, parameter definition)
-        """
-        input_channel_size, input_row_size, input_col_size = input_shape
-        kernel_size = self.kernel_size
-        stride = self.stride
-        padding = self.padding
-
-        scheme = None
-        if self.is_quantized and "quantize" in self.__dict__["_dmc"]:
-            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
-
-        if scheme != QuantizationScheme.STATIC:
-
-            layer_def = (
-                f"{self.__class__.__name__} {var_name}("
-                f"{input_channel_size}, {input_row_size}, {input_col_size}, "
-                f"{kernel_size}, {stride}, {padding});\n"
-            )
-            layer_header = f"extern {self.__class__.__name__} {var_name};\n\n"
-        else:
-
-            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
-            activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
-            
-            quantize_property = ""
-
-            if activation_bitwidth == 8:
-                quantize_property += ACTIVATION_BITWIDTH_8
-            elif activation_bitwidth == 4:
-                quantize_property += ACTIVATION_BITWIDTH_4
-            elif activation_bitwidth == 2:
-                quantize_property += ACTIVATION_BITWIDTH_2
-            else:
-                raise QuantizationBitWidthError
-            
-            layer_def = (
-                f"{self.__class__.__name__}_SQ {var_name}("
-                f"{input_channel_size}, {input_row_size}, {input_col_size}, "
-                f"{kernel_size}, {stride}, {padding}, {quantize_property});\n"
-            )
-            layer_header = f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
-
-        layer_param_def = ""
-
-        return layer_header, layer_def, layer_param_def
+        return _pool_convert_to_c(self, var_name, input_shape)
