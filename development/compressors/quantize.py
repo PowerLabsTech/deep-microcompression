@@ -51,6 +51,17 @@ class QuantizationScaleType(Enum):
 class QuantizationGranularity(Enum):
     PER_TENSOR = auto()
     PER_CHANNEL = auto()
+
+
+class QuantizationBitWidthError(ValueError):
+    """Raised when an unsupported quantization bitwidth is requested."""
+    def __init__(self, bitwidth):
+        super().__init__(f"Unsupported quantization bitwidth: {bitwidth}. Must be 2, 4, or 8.")
+
+class QuantizationGranularityError(ValueError):
+    """Raised when an unsupported quantization granularity is requested."""
+    def __init__(self, granularity):
+        super().__init__(f"Unsupported quantization granularity: {granularity}.")
     
 
 class Quantize:
@@ -91,13 +102,21 @@ class Quantize:
 
         self.base = base
         
-        # Allows a layer to derive its input scale from the previous layer's output scale.
+        # Allows a layer to derive its scale/zero_point from the previous layer's output.
+        # ASYMMETRIC base is always a single-element list: [previous_output_quantize].
+        # Using sum() over zero_points would be wrong for multiple bases — assert prevents misuse.
         if base is not None:
             if base_accumulator is None:
                 if scale_type == QuantizationScaleType.ASSYMMETRIC:
-                    self.base_accumulator: Callable[[Iterable["Quantize"]], Tuple[torch.Tensor, torch.Tensor]] = lambda base : (prod([b.scale for b in base]), sum([b.zero_point for b in base]))
+                    def _assy_acc(base):
+                        assert len(base) == 1, (
+                            "ASSYMMETRIC base_accumulator only supports a single base quantizer; "
+                            f"got {len(base)}. Provide a custom base_accumulator for multi-base cases."
+                        )
+                        return base[0].scale, base[0].zero_point
+                    self.base_accumulator: Callable[[Iterable["Quantize"]], Tuple[torch.Tensor, torch.Tensor]] = _assy_acc
                 else:
-                    self.base_accumulator: Callable[[Iterable["Quantize"]], torch.Tensor] = lambda base : prod([b.scale for b in base])
+                    self.base_accumulator: Callable[[Iterable["Quantize"]], torch.Tensor] = lambda base: prod([b.scale for b in base])
             else:
                 self.base_accumulator = base_accumulator
 
@@ -107,23 +126,34 @@ class Quantize:
     def scale(self):
         """Calculates the scaling factor: (max - min) / (2^bits - 1)."""
         if self.base is None:
+            if self.rmax is None:
+                raise RuntimeError(
+                    f"Quantizer on {self.module} has not been calibrated. "
+                    "Run a forward pass before accessing scale."
+                )
             if self.scale_type == QuantizationScaleType.SYMMETRIC:
                 scale = get_quantize_scale_sy(self.rmax, self.bitwidth)
             else:
                 scale = get_quantize_scale_zero_point_assy(self.rmax, self.rmin, self.bitwidth)[0]
         else:
-            # Dependent Quantizer (e.g., inherited activation scale)
+            # Dependent quantizer: inherits scale from the previous layer's output quantizer.
             if self.scale_type == QuantizationScaleType.SYMMETRIC:
-                scale = self.base_accumulator(self.base)    
+                scale = self.base_accumulator(self.base)
             else:
                 scale = self.base_accumulator(self.base)[0]
         return scale
-    
+
     @property
     def zero_point(self):
         """Calculates the integer offset (Zero-Point) for asymmetric quantization."""
-        assert self.scale_type == QuantizationScaleType.ASSYMMETRIC, f"scale type should be {QuantizationScaleType.ASSYMMETRIC}"
+        assert self.scale_type == QuantizationScaleType.ASSYMMETRIC, \
+            f"zero_point is only defined for ASSYMMETRIC quantizers, got {self.scale_type}"
         if self.base is None:
+            if self.rmin is None:
+                raise RuntimeError(
+                    f"Quantizer on {self.module} has not been calibrated. "
+                    "Run a forward pass before accessing zero_point."
+                )
             return get_quantize_scale_zero_point_assy(self.rmax, self.rmin, self.bitwidth)[1].to(torch.int8)
         else:
             return self.base_accumulator(self.base)[1].to(torch.int8)
