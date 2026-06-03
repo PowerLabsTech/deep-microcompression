@@ -49,6 +49,7 @@ from ..compressors import (
     QuantizationScheme,
     QuantizationScaleType,
     QuantizationGranularity,
+    QuantizationBitWidthError,
 )
 from ..utils import (
     convert_tensor_to_bytes_var,
@@ -451,8 +452,11 @@ class Sequential(nn.Sequential):
                         warnings.warn("Model has been pruned before to force for a repruning specify force_prune_channel as True")
                         continue
 
-                    model.apply(prune_channel_layer)
+                    # Build masks first so weight_prune_channel exists before
+                    # is_pruned_channel=True is set — prevents AttributeError in
+                    # any forward pass that could fire between the two calls.
                     model.init_prune_channel()
+                    model.apply(prune_channel_layer)
 
             elif compression_type == "quantize":
                 def quantize_layer(layer): layer.is_quantized = True
@@ -526,7 +530,7 @@ class Sequential(nn.Sequential):
                         if not isinstance(layer_sparsity, float) and \
                             layer_sparsity not in self[name].get_prune_channel_possible_hyperparameters():
                             if raise_error:
-                                raise ValueError(f"Recieved a layer_sparsity of {layer_sparsity} ")
+                                raise ValueError(f"Received a layer_sparsity of {layer_sparsity} ")
                             return False
                     for name in self.names():
                         # if name not in sparsity and self.layers[name].is_prunable():
@@ -604,7 +608,7 @@ class Sequential(nn.Sequential):
                             return False
                         if layer_parameter_bitwidth not in [2, 4, 8]:
                             if raise_error:
-                                raise ValueError(f"Recieved a layer_sparsity of {layer_sparsity} ")
+                                raise ValueError(f"Received a layer_sparsity of {layer_sparsity} ")
                             return False
                     for name in self.names():
                         if name not in parameter_bitwidth:
@@ -815,7 +819,7 @@ class Sequential(nn.Sequential):
             self.train() # Ensure observers are updating
             if scheme == QuantizationScheme.STATIC:
                 assert calibration_data is not None, f"Pass a calibration data when doing static quantization"
-                # self.to(calibration_data.device)
+                self.to(calibration_data.device)
                 self(calibration_data)
 
         return
@@ -1078,7 +1082,7 @@ class Sequential(nn.Sequential):
             elif activation_bitwidth == 2:
                 quantize_property += ACTIVATION_BITWIDTH_2
             else:
-                raise QuantizationBitWidthError
+                raise QuantizationBitWidthError(activation_bitwidth)
             
             workspace_header = (
                 f"#define WORKSPACE_SIZE {max_layer_acitivation_workspace_size}\n"
