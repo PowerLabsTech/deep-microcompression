@@ -134,18 +134,31 @@ class Block(Layer, nn.Module):
                 layer.init_quantize(parameter_bitwidth, scheme, granularity)
             return
 
-        # previous_output_quantize = self.input_quantize
-        for layer in self.layers():
+        # Only the last layer receives current_output_quantize. That argument forces a layer's
+        # output scale to match an external quantizer — required when this Block sits inside a
+        # Branch, where both paths must share the same integer scale for the residual add to be
+        # valid. Intermediate layers must calibrate independently; passing the constraint inward
+        # would force every layer's output to the external scale, which is wrong (activations
+        # mid-block should not be clamped to the final branch scale) and would prevent each
+        # layer from finding its own optimal range during QAT.
+        layers = list(self.names_layers())
+        for name, layer in layers[:-1]:
             previous_output_quantize = layer.init_quantize(
-                parameter_bitwidth, granularity, 
-                scheme, activation_bitwidth, previous_output_quantize, 
+                parameter_bitwidth, granularity,
+                scheme, activation_bitwidth, previous_output_quantize,
                 current_output_quantize=None
             )
 
+        name, layer = layers[-1]
+        previous_output_quantize = layer.init_quantize(
+            parameter_bitwidth, granularity,
+            scheme, activation_bitwidth, previous_output_quantize,
+            current_output_quantize=current_output_quantize
+        )
+
         if hasattr(self[-1], "output_quantize"):
-            # return self[-1].output_quantize
-            assert self[-1].output_quantize == previous_output_quantize
-            # print(f"Block has output quantize has {self[-1].output_quantize}, {previous_output_quantize}")
+            assert self[-1].output_quantize is previous_output_quantize
+
         return previous_output_quantize
 
 
