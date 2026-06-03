@@ -21,11 +21,13 @@ from torch import nn
 
 from .layer import Layer
 from ..compressors import (
-    Prune_Channel, 
+    Prune_Channel,
     Quantize,
     QuantizationScheme,
     QuantizationScaleType,
-    QuantizationGranularity
+    QuantizationGranularity,
+    QuantizationBitWidthError,
+    QuantizationGranularityError,
 )
 
 from ..utils import (
@@ -286,7 +288,10 @@ class Conv2d(Layer, nn.Conv2d):
         return None
 
     def get_quantize_possible_hyperparameters(self):
-        return super().get_quantize_possible_hyperparameters()
+        return {
+            "parameter_bitwidth": [8, 4, 2],
+            "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
+        }
 
     @torch.no_grad()
     def get_size_in_bits(self) -> int:
@@ -302,7 +307,7 @@ class Conv2d(Layer, nn.Conv2d):
         if self.is_quantized:
             is_packed = True
             weight_bitwidth = self.weight_quantize.bitwidth
-            if self.bias is not None and hasattr(self, "bias_quantize"):
+            if self.bias is not None:
                 bias_bitwidth = self.bias_quantize.bitwidth
 
             # Add metadata overhead
@@ -467,7 +472,7 @@ class Conv2d(Layer, nn.Conv2d):
             elif granularity == QuantizationGranularity.PER_CHANNEL:
                 quantize_property += PER_CHANNEL
             else:
-                raise QuantizationGranularityError
+                raise QuantizationGranularityError(granularity)
 
             quantize_property += "_"
             if parameter_bitwidth == 8:
@@ -477,7 +482,7 @@ class Conv2d(Layer, nn.Conv2d):
             elif parameter_bitwidth == 2:
                 quantize_property += PARAMETER_BITWIDTH_2
             else:
-                raise QuantizationBitWidthError
+                raise QuantizationBitWidthError(parameter_bitwidth)
 
             if self.bias is not None:
                 layer_def = (
@@ -518,7 +523,7 @@ class Conv2d(Layer, nn.Conv2d):
             elif granularity == QuantizationGranularity.PER_CHANNEL:
                 quantize_property += PER_CHANNEL
             else:
-                raise QuantizationGranularityError
+                raise QuantizationGranularityError(granularity)
 
             quantize_property += "_"
 
@@ -529,10 +534,10 @@ class Conv2d(Layer, nn.Conv2d):
             elif activation_bitwidth == 2:
                 quantize_property += ACTIVATION_BITWIDTH_2
             else:
-                raise QuantizationBitWidthError
-            
+                raise QuantizationBitWidthError(activation_bitwidth)
+
             quantize_property += "_"
-            
+
             if parameter_bitwidth == 8:
                 quantize_property += PARAMETER_BITWIDTH_8
             elif parameter_bitwidth == 4:
@@ -540,7 +545,7 @@ class Conv2d(Layer, nn.Conv2d):
             elif parameter_bitwidth == 2:
                 quantize_property += PARAMETER_BITWIDTH_2
             else:
-                raise QuantizationBitWidthError
+                raise QuantizationBitWidthError(parameter_bitwidth)
             
             if self.bias is not None:
                 layer_def = (
