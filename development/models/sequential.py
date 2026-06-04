@@ -440,23 +440,24 @@ class Sequential(nn.Sequential):
               
         for compression_type, compression_type_param in config.items():
             if compression_type == "prune_channel":
+                
+                if isinstance(config["prune_channel"]["sparsity"], (float, int)) and config["prune_channel"]["sparsity"] == 0:
+                    continue
 
-                if not isinstance(config["prune_channel"]["sparsity"], (float, int)) or config["prune_channel"]["sparsity"] != 0:
+                def prune_channel_layer(layer): layer.is_pruned_channel = True
 
-                    def prune_channel_layer(layer): layer.is_pruned_channel = True
+                # To prevent weight reselection especially in case of two step training
+                # since the weight are not modified in place when pruning is done first
+                # before QAT
+                if self.is_pruned_channel and not force_prune_channel:
+                    warnings.warn("Model has been pruned before to force for a repruning specify force_prune_channel as True")
+                    continue
 
-                    # To prevent weight reselection especially in case of two step training
-                    # since the weight are not modified in place when pruning is done first
-                    # before QAT
-                    if self.is_pruned_channel and not force_prune_channel:
-                        warnings.warn("Model has been pruned before to force for a repruning specify force_prune_channel as True")
-                        continue
-
-                    # Build masks first so weight_prune_channel exists before
-                    # is_pruned_channel=True is set — prevents AttributeError in
-                    # any forward pass that could fire between the two calls.
-                    model.init_prune_channel()
-                    model.apply(prune_channel_layer)
+                # Build masks first so weight_prune_channel exists before
+                # is_pruned_channel=True is set — prevents AttributeError in
+                # any forward pass that could fire between the two calls.
+                model.init_prune_channel()
+                model.apply(prune_channel_layer)
 
             elif compression_type == "quantize":
                 def quantize_layer(layer): layer.is_quantized = True
@@ -679,10 +680,17 @@ class Sequential(nn.Sequential):
         """
         prune_channel_possible_hypermeters = dict()
 
+        def _expand_prune_hp(prefix, hp, out):
+            if isinstance(hp, dict):
+                for sub_name, sub_hp in hp.items():
+                    _expand_prune_hp(f"{prefix}.{sub_name}", sub_hp, out)
+            else:
+                out[prefix] = hp
+
         for name, layer in list(self.names_layers())[:-1]:
             layer_prune_channel_possible_hypermeters = layer.get_prune_channel_possible_hyperparameters()
             if layer_prune_channel_possible_hypermeters is not None:
-                prune_channel_possible_hypermeters[f"sparsity.{name}"] = layer_prune_channel_possible_hypermeters
+                _expand_prune_hp(f"sparsity.{name}", layer_prune_channel_possible_hypermeters, prune_channel_possible_hypermeters)
 
         # TODO: To extend to other metric type
         prune_channel_possible_hypermeters["metric"] = ["l2"]
@@ -701,11 +709,18 @@ class Sequential(nn.Sequential):
         quantize_possible_hypermeters["scheme"] = [scheme]
         quantize_possible_hypermeters["activation_bitwidth"] = activation_bitwidth
         
+        def _expand_quantize_hp(prefix, hp, out):
+            if "parameter_bitwidth" in hp:
+                out[f"parameter_bitwidth.{prefix}"] = hp["parameter_bitwidth"]
+                out[f"granularity.{prefix}"] = hp["granularity"]
+            else:
+                for sub_name, sub_hp in hp.items():
+                    _expand_quantize_hp(f"{prefix}.{sub_name}", sub_hp, out)
+
         for name, layer in list(self.names_layers()):
             layer_quantize_possible_hypermeters = layer.get_quantize_possible_hyperparameters()
             if layer_quantize_possible_hypermeters is not None:
-                quantize_possible_hypermeters[f"parameter_bitwidth.{name}"] = layer_quantize_possible_hypermeters["parameter_bitwidth"]
-                quantize_possible_hypermeters[f"granularity.{name}"] = layer_quantize_possible_hypermeters["granularity"]
+                _expand_quantize_hp(name, layer_quantize_possible_hypermeters, quantize_possible_hypermeters)
 
         return quantize_possible_hypermeters
 
