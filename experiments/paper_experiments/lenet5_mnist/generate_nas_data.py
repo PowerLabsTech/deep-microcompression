@@ -72,39 +72,63 @@ def main():
     nas_filter = make_nas_filter(HARDWARE, INPUT_SHAPE)
 
     print(f"Generating {args.num_data} NAS samples …")
-    nas_params = get_nas_compression_data(
-        baseline_model,
-        INPUT_SHAPE,
-        test_loader,
-        metric,
-        calibration_data,
-        filter=nas_filter,
-        device=device,
-        num_data=args.num_data,
-        train=args.with_training,
-        train_dataloader=train_loader,
-        epochs=args.epochs,
-        criterion_fun=nn.CrossEntropyLoss(),
-        random_seed=seed,
-        optimizer_cls=torch.optim.SGD,
-        optimizer_kwargs={"momentum": 0.9, "weight_decay": 5e-4},
-        lr_scheduler_cls=torch.optim.lr_scheduler.ReduceLROnPlateau,
-        lr_scheduler_kwargs={"mode": "min", "patience": 1},
-    )
-
     os.makedirs(NAS_DATA_DIR, exist_ok=True)
     fname    = f"nas_{args.num_data}_{seed}_train{args.with_training}.pth"
     out_path = os.path.join(NAS_DATA_DIR, fname)
-    torch.save({
-        "nas_parameters": nas_params,
-        "num_data":       args.num_data,
-        "seed":           seed,
-        "with_training":  args.with_training,
-        "epochs":         args.epochs,
-        "hardware":       HARDWARE["name"],
-    }, out_path)
 
-    n_saved = len(list(nas_params.values())[0])
+    nas_data = {}
+    n_done   = 0
+
+    if os.path.exists(out_path):
+        data = torch.load(out_path, weights_only=False)
+        assert data["with_training"] == args.with_training, \
+            "Existing data has different training setting."
+        assert data["epochs"] == args.epochs, \
+            "Existing data has different epoch setting."
+        assert data["hardware"] == HARDWARE["name"], \
+            "Existing data was generated for different hardware."
+        nas_data = data["nas_parameters"]
+        n_done   = len(next(iter(nas_data.values()))) if nas_data else 0
+        print(f"Resuming: {n_done}/{args.num_data} samples already done.")
+
+    remaining = args.num_data - n_done
+    if remaining <= 0:
+        print(f"All {n_done} samples already generated — nothing to do.")
+    else:
+        for i in range(remaining):
+            print(f"  Sample {n_done + i + 1}/{args.num_data} …")
+            nas_params = get_nas_compression_data(
+                baseline_model,
+                INPUT_SHAPE,
+                test_loader,
+                metric,
+                calibration_data,
+                filter=nas_filter,
+                device=device,
+                num_data=1,
+                train=args.with_training,
+                train_dataloader=train_loader,
+                epochs=args.epochs,
+                criterion_fun=nn.CrossEntropyLoss(),
+                random_seed=seed,
+                optimizer_cls=torch.optim.SGD,
+                optimizer_kwargs={"momentum": 0.9, "weight_decay": 5e-4},
+                lr_scheduler_cls=torch.optim.lr_scheduler.ReduceLROnPlateau,
+                lr_scheduler_kwargs={"mode": "min", "patience": 1},
+            )
+            for k, v in nas_params.items():
+                nas_data.setdefault(k, []).extend(v)
+
+            torch.save({
+                "nas_parameters": nas_data,
+                "num_data":       args.num_data,
+                "seed":           seed,
+                "with_training":  args.with_training,
+                "epochs":         args.epochs,
+                "hardware":       HARDWARE["name"],
+            }, out_path)
+
+    n_saved = len(next(iter(nas_data.values()))) if nas_data else 0
     print(f"Saved {n_saved} samples → {out_path}")
 
 
