@@ -85,7 +85,7 @@ def get_model_filter_for_nas(baseline_model, input_shape):
         if compression_config["quantize"]["scheme"] != QuantizationScheme.STATIC:
             return False
         # filter out if activation cannot size in ram
-        if compressed_model.get_workspace_size(input_shape=input_shape) / original_workspace_size > experiment_args.search_min_flash_ratio:
+        if compressed_model.get_workspace_size(input_shape=input_shape) / original_workspace_size > experiment_args.search_min_ram_ratio:
             return False
         # filter out if model size cannot size in flash
         if compressed_model.get_size_in_bytes() / original_model_size > experiment_args.search_min_flash_ratio:
