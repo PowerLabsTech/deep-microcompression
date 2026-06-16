@@ -514,25 +514,56 @@ class Sequential(nn.Sequential):
                     sparsity = dict()
                     for name in self.names():
                         sparsity[name] = layer_sparsity
-                # For non uniform pruning, 
+                # For non uniform pruning,
                 elif isinstance(sparsity, dict):
+                    def _all_leaves_numeric(d, path=""):
+                        """Recursively verify every leaf in a nested sparsity dict is float/int."""
+                        for k, v in d.items():
+                            full = f"{path}.{k}" if path else k
+                            if isinstance(v, dict):
+                                ok = _all_leaves_numeric(v, full)
+                                if not ok:
+                                    return False
+                            elif not isinstance(v, (float, int)):
+                                if raise_error:
+                                    raise TypeError(
+                                        f"Sparsity leaf at '{full}' must be float or int, "
+                                        f"got {type(v)}."
+                                    )
+                                return False
+                        return True
+
                     for name, layer_sparsity in sparsity.items():
                         # Skip if layer cannot be pruned
                         if self[name].get_prune_channel_possible_hyperparameters() is None:
                             continue
-                        if not isinstance(layer_sparsity, (float, int, dict)):
+                        if isinstance(layer_sparsity, dict):
+                            if not _all_leaves_numeric(layer_sparsity, name):
+                                return False
+                        elif not isinstance(layer_sparsity, (float, int)):
                             if raise_error:
-                                raise TypeError(f"layer sparsity has to be of type of float/int or dict is it is a Block layer  not {type(layer_sparsity)} for layer {name}!")
+                                raise TypeError(
+                                    f"Layer sparsity must be float, int, or dict (for Block/Branch per-sublayer control), "
+                                    f"got {type(layer_sparsity)} for layer '{name}'."
+                                )
                             return False
                         if name not in self.names():
                             if raise_error:
                                 raise NameError(f"Found unknown layer name {name}")
                             return False
-                        if not isinstance(layer_sparsity, float) and \
-                            layer_sparsity not in self[name].get_prune_channel_possible_hyperparameters():
-                            if raise_error:
-                                raise ValueError(f"Received a layer_sparsity of {layer_sparsity} ")
-                            return False
+                        if isinstance(layer_sparsity, int):
+                            hp = self[name].get_prune_channel_possible_hyperparameters()
+                            # hp is a dict for Block/Branch; flatten to a combined range for validation
+                            if isinstance(hp, dict):
+                                # Nested dicts are not supported for validation; only the top-level values are checked
+                                all_ranges = [r for r in hp.values() if not isinstance(r, dict)]
+                                valid = not all_ranges or layer_sparsity in range(min(len(r) for r in all_ranges))
+                            else:
+                                valid = layer_sparsity in hp
+                            if not valid:
+                                if raise_error:
+                                    raise ValueError(f"Received a layer_sparsity of {layer_sparsity} which is out of the valid range for layer '{name}'.")
+                                return False
                     for name in self.names():
                         # if name not in sparsity and self.layers[name].is_prunable():
                         if name not in sparsity:
@@ -592,25 +623,62 @@ class Sequential(nn.Sequential):
                 elif isinstance(parameter_bitwidth, dict):
                     assert len(parameter_bitwidth) == len(granularity) and parameter_bitwidth.keys() == granularity.keys(), \
                             f"the keys of parameter_bitwidth has to match with that of granularity"
-                    
+
+                    def _valid_parameter_bitwidth_leaves(d, path):
+                        """Recursively validate every leaf is an int in [2, 4, 8]."""
+                        for k, v in d.items():
+                            full = f"{path}.{k}"
+                            if isinstance(v, dict):
+                                if not _valid_parameter_bitwidth_leaves(v, full):
+                                    return False
+                            elif not isinstance(v, int) or v not in [2, 4, 8]:
+                                if raise_error:
+                                    raise TypeError(
+                                        f"Nested parameter_bitwidth at '{full}' must be int in [2, 4, 8], "
+                                        f"got {v!r}."
+                                    )
+                                return False
+                        return True
+
+                    def _valid_granularity_leaves(d, path):
+                        """Recursively validate every leaf is a QuantizationGranularity."""
+                        for k, v in d.items():
+                            full = f"{path}.{k}"
+                            if isinstance(v, dict):
+                                if not _valid_granularity_leaves(v, full):
+                                    return False
+                            elif not isinstance(v, QuantizationGranularity):
+                                if raise_error:
+                                    raise TypeError(
+                                        f"Nested granularity at '{full}' must be QuantizationGranularity, "
+                                        f"got {type(v)}."
+                                    )
+                                return False
+                        return True
+
                     for (layer_name, layer_parameter_bitwidth), (_, layer_granularity) in zip(parameter_bitwidth.items(), granularity.items()):
-                        # Skip if layer cannot be pruned (
-                        if not isinstance(layer_parameter_bitwidth, int):
-                            if raise_error:
-                                raise TypeError(f"layer parameter bitwidth has to be of type of int not {type(layer_sparsity)} for layer {layer_name}!")
-                            return False
-                        if not isinstance(layer_granularity, QuantizationGranularity):
-                            if raise_error:
-                                raise TypeError(f"layer granularity has to be of type QuantizationGranularity not {type(layer_sparsity)} for layer {layer_name}!")
-                            return False
                         if layer_name not in self.names():
                             if raise_error:
                                 raise NameError(f"Found unknown layer name {layer_name}")
                             return False
-                        if layer_parameter_bitwidth not in [2, 4, 8]:
-                            if raise_error:
-                                raise ValueError(f"Received a layer_sparsity of {layer_sparsity} ")
-                            return False
+                        if isinstance(layer_parameter_bitwidth, dict):
+                            if not _valid_parameter_bitwidth_leaves(layer_parameter_bitwidth, layer_name):
+                                return False
+                            if not _valid_granularity_leaves(layer_granularity, layer_name):
+                                return False
+                        else:
+                            if not isinstance(layer_parameter_bitwidth, int):
+                                if raise_error:
+                                    raise TypeError(f"layer parameter bitwidth has to be of type of int not {type(layer_parameter_bitwidth)} for layer {layer_name}!")
+                                return False
+                            if not isinstance(layer_granularity, QuantizationGranularity):
+                                if raise_error:
+                                    raise TypeError(f"layer granularity has to be of type QuantizationGranularity not {type(layer_granularity)} for layer {layer_name}!")
+                                return False
+                            if layer_parameter_bitwidth not in [2, 4, 8]:
+                                if raise_error:
+                                    raise ValueError(f"Received an invalid parameter_bitwidth of {layer_parameter_bitwidth} for layer {layer_name}.")
+                                return False
                     for name in self.names():
                         if name not in parameter_bitwidth:
                             parameter_bitwidth[name] = 8
