@@ -214,9 +214,6 @@ def build_hub_to_dmc_map(dmc_model):
     # FC head
     hub_groups.append("fc")
 
-    print(hub_groups)
-    print(dmc_names)
-
     # Verify lengths match
     assert len(hub_groups) == len(dmc_names), (
         f"Mismatch: {len(hub_groups)} hub groups vs {len(dmc_names)} DMC layers.\n"
