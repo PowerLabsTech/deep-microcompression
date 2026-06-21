@@ -10,17 +10,22 @@ DATASET_DIR = "../../Datasets/CIFAR_100/"
 def get_data_loaders():
     print("Loading CIFAR100 dataset...")
 
-    train_transform = transforms.Compose([
-        # transforms.RandomCrop((24, 24)),
-        transforms.Resize((32, 32)),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=(0.5071, 0.4867, 0.4408),
-            std=(0.2675, 0.2565, 0.2761)
-        )
-    ])
+    mean = (0.5071, 0.4867, 0.4408)
+    std  = (0.2675, 0.2565, 0.2761)
 
-    test_transform = train_transform
+    # Proper training augmentation missing from the original cifar100.py
+    train_transform = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+    ])
+    # Clean test transform — no augmentation
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+    ])
 
     cifar100_train_dataset = datasets.CIFAR100(DATASET_DIR, train=True, download=True, transform=train_transform)
     cifar100_test_dataset = datasets.CIFAR100(DATASET_DIR, train=False, download=True, transform=test_transform)
