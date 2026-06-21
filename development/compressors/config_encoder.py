@@ -28,7 +28,10 @@ class ConfigEncoder:
         self.categorical_keys = categorical_keys
         self.dtype = dtype
         self.device = device
-        
+        # Pre-built prefix set: "quantize.granularity" also matches
+        # "quantize.granularity.branch_0.sublayer1.conv2d_0" etc.
+        self._categorical_prefixes = tuple(ck + "." for ck in categorical_keys)
+
         # Pre-compute normalisation constants and category maps
         self._setup_encoders()
 
@@ -39,7 +42,7 @@ class ConfigEncoder:
         # Normalize Integer Ranges, with the max value
         for key in self.search_space:
             # removing the layer name
-            if key not in self.categorical_keys and ".".join(key.split(".")[:-1]) not in self.categorical_keys:
+            if key not in self.categorical_keys and not key.startswith(self._categorical_prefixes):
                 # Store the max value for normalization (e.g., 6, 16, 84)
                 self.encoders[key] = {"type": "nominal", "max": max(self.search_space[key])}
             else:
@@ -85,7 +88,7 @@ class ConfigEncoder:
             # Encode integer type, normalized as float
             for key in self.search_space:
                 # removing the layer name
-                if key not in self.categorical_keys and ".".join(key.split(".")[:-1]) not in self.categorical_keys:
+                if key not in self.categorical_keys and not key.startswith(self._categorical_prefixes):
                     val = config.get(key)
                     if normalise_norminal:
                         val /= self.encoders[key]["max"]
@@ -111,7 +114,7 @@ class ConfigEncoder:
                 # Encode integer type, normalized as float
                 for key in self.search_space:
                     # removing the layer name
-                    if key not in self.categorical_keys and ".".join(key.split(".")[:-1]) not in self.categorical_keys:
+                    if key not in self.categorical_keys and not key.startswith(self._categorical_prefixes):
                         val = config.get(key)[i]
                         vector_i.append(val)
 
