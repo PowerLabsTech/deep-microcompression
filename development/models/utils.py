@@ -279,25 +279,20 @@ def get_nas_compression_data(
         # item is already a raw config dict
         compression_config        = item
         compression_config_decode = fused_model.decode_compression_dict_hyperparameter(compression_config)
-        compressed_model = fused_model.init_compress(
-            config=compression_config_decode,
-            input_shape=input_shape,
-            calibration_data=calibration_data,
-            device=device
-        )
 
         # --- optional fine-tuning ---
         if train:
+            prune_config    = {"prune_channel": compression_config_decode["prune_channel"]}
+            quantize_config = {"quantize": compression_config_decode["quantize"]}
+            pruned_model = fused_model.init_compress(
+                prune_config, input_shape,
+                calibration_data=calibration_data, device=device,
+            )
+
             if two_step:
                 prune_epochs = max(1, epochs // 2)
                 quant_epochs = epochs - prune_epochs
 
-                prune_config = copy.deepcopy(compression_config_decode)
-                del prune_config["quantize"]
-                pruned_model = fused_model.init_compress(
-                    prune_config, input_shape,
-                    calibration_data=calibration_data, device=device,
-                )
 
                 optimizer_fun = optimizer_cls(pruned_model.parameters(), lr=lr, **optimizer_kwargs)
                 lr_scheduler  = lr_scheduler_cls(optimizer_fun, **lr_scheduler_kwargs)
@@ -314,15 +309,16 @@ def get_nas_compression_data(
                     device=device,
                 )
 
-                compressed_model = pruned_model.init_compress(
-                    config=compression_config_decode,
-                    input_shape=input_shape,
-                    calibration_data=calibration_data,
-                    force_prune_channel=True,
-                    device=device,
-                )
             else:
                 quant_epochs = epochs
+
+            
+            compressed_model = pruned_model.init_compress(
+                config=quantize_config,
+                input_shape=input_shape,
+                calibration_data=calibration_data,
+                device=device,
+            )
 
             optimizer_fun = optimizer_cls(compressed_model.parameters(), lr=lr, **optimizer_kwargs)
             lr_scheduler  = lr_scheduler_cls(optimizer_fun, **lr_scheduler_kwargs)
@@ -336,6 +332,13 @@ def get_nas_compression_data(
                 metrics={"metric": metric_fun},
                 verbose=False,
                 callbacks=callbacks,
+                device=device,
+            )
+        else:
+            compressed_model = fused_model.init_compress(
+                config=compression_config_decode,
+                input_shape=input_shape,
+                calibration_data=calibration_data,
                 device=device,
             )
 
