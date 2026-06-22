@@ -314,9 +314,13 @@ class Sequential(nn.Sequential):
                     metrics_values[f"validation_{name}"] = metrics_result[name]
 
 
-                # Learning rate scheduling
-                if lr_scheduler is not None: 
+                # ReduceLROnPlateau needs the validation metric
+                if lr_scheduler is not None and isinstance(lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     lr_scheduler.step(validation_loss)
+            
+            # Epoch-based schedulers (CosineAnnealingLR, StepLR, etc.) step every epoch
+            if lr_scheduler is not None and not isinstance(lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                lr_scheduler.step()
 
             # Logging
                 if verbose:
@@ -350,7 +354,6 @@ class Sequential(nn.Sequential):
                 for name in metrics:
                     self.fit_history[f"train_{name}"] = self.fit_history.get(f"train_{name}", []) + [metrics_values[f"train_{name}"]]
                     history[f"train_{name}"] = history.get(f"train_{name}", []) + [metrics_values[f"train_{name}"]]
-            
             # Callbacks (e.g., EarlyStopping, ModelCheckpoint)
             for callback in callbacks:
                 if callback(self, history, epoch):
