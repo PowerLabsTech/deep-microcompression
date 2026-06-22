@@ -26,8 +26,14 @@ def get_data_loaders():
     mnist_test_dataset = datasets.MNIST(DATASET_DIR, train=False, download=True, transform=test_transform)
     
     # Increase batch size for smoother gradients if your hardware allows
-    mnist_train_loader = data.DataLoader(mnist_train_dataset, batch_size=64, shuffle=True)
-    mnist_test_loader = data.DataLoader(mnist_test_dataset, batch_size=64, shuffle=False)
+    mnist_train_loader = data.DataLoader(
+        mnist_train_dataset, batch_size=64, shuffle=True,
+        num_workers=4, pin_memory=True, persistent_workers=True,
+    )
+    mnist_test_loader = data.DataLoader(
+        mnist_test_dataset, batch_size=64, shuffle=False,
+        num_workers=4, pin_memory=True, persistent_workers=True,
+    )
     
     return mnist_train_loader, mnist_test_loader
 

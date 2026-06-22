@@ -116,6 +116,79 @@ def convert_from_layer_torch_nn_to_dmc(module: nn.Module) -> Layer:
     return layer
 
 
+def sample_nas_compression_configs(
+    model: Sequential,
+    input_shape: Tuple,
+    calibration_data: torch.Tensor,
+    n_configs: int = 1000,
+    filter: Callable = lambda compressed_model, compression_config: True,
+    device: str = "cpu",
+    random_seed: Optional[int] = None,
+    deduplicate: bool = True,
+    max_attempts: int = 200_000,
+) -> Tuple[List[Dict], int]:
+    """
+    Pre-generate a pool of hardware-valid compression configs in one pass.
+
+    Returns raw (encoded) config dicts. Pass a slice to get_nas_compression_data()
+    via the `configs` argument to guarantee zero duplicate configs across parallel workers.
+
+    Args:
+        n_configs:    Number of unique valid configs to generate.
+        filter:       Callable(compressed_model, decoded_config) -> bool.
+        deduplicate:  Reject configs with duplicate hyperparameter combinations.
+        max_attempts: Hard cap on random draws before raising RuntimeError.
+
+    Returns:
+        List of raw (encoded) config dicts, length n_configs.
+        Number of attempts to generate the n_configs
+    """
+    if random_seed is not None:
+        random.seed(random_seed)
+
+    fused_model             = model.fuse()
+    compression_possible_hp = fused_model.get_compression_possible_hyperparameters()
+
+    pool     = []
+    seen     = set()
+    attempts = 0
+
+    while len(pool) < n_configs:
+        attempts += 1
+        if attempts > max_attempts:
+            raise RuntimeError(
+                f"Could not generate {n_configs} unique valid configs after {max_attempts} "
+                f"attempts. Found {len(pool)}. The filter may be too restrictive."
+            )
+
+        compression_config = {
+            config_key: random.choice(list(config_hp))
+            for config_key, config_hp in compression_possible_hp.items()
+        }
+        if deduplicate:
+            key = str(sorted(compression_config.items()))
+            if key in seen:
+                continue
+
+        decoded = fused_model.decode_compression_dict_hyperparameter(compression_config)
+        if not fused_model.is_compression_config_valid(
+            decoded, raise_error=False
+        ):
+            continue
+
+        compressed = fused_model.init_compress(
+            decoded, input_shape, calibration_data=calibration_data, device=device
+        )
+        if not filter(compressed, decoded):
+            continue
+
+        if deduplicate:
+            seen.add(key)
+        pool.append(compression_config)
+
+    return pool, attempts
+
+
 def get_nas_compression_data(
     model:Sequential,
     input_shape:Tuple,
@@ -125,6 +198,7 @@ def get_nas_compression_data(
     filter:Callable = lambda compressed_model, compression_config: True,
     device:str="cpu",
     num_data:int=100,
+    configs:Optional[List[Dict]] = None,
     train:bool=False,
     train_dataloader:Optional[torch.utils.data.DataLoader] = None,
     epochs:Optional[int] = None,
@@ -138,26 +212,30 @@ def get_nas_compression_data(
     random_seed:Optional[int] = None,
     two_step:bool=True,
     eval_subset_size:Optional[int] = None,
-    max_filter_attempts:int = 1000,
+    max_filter_attempts:int = 200_000
 ) -> Dict[str, List]:
     """
-    Generates data for Neural Architecture Search (NAS) / Random Search.
-    Randomly samples valid compression configurations and records the resulting
-    metric (optionally after fine-tuning) for each.
+    Fine-tune and evaluate compression configs, returning a NAS training dataset.
+
+    Two modes:
+    - **Pool mode** (``configs`` provided): iterates the given list of raw config dicts.
+      Use a slice from :func:`sample_nas_compression_configs` for guaranteed uniqueness
+      across parallel workers — no random sampling is done.
+    - **Random mode** (``configs=None``): samples ``num_data`` random valid configs on
+      the fly (original behaviour).
 
     Args:
-        num_data: Number of random architectures to sample
-        eval_subset_size: If set, evaluation uses a random subset of data_loader's
-            dataset of this size instead of the full set. Cuts evaluation time
-            by 10-20x for large datasets (e.g. CIFAR-100) with minimal NAS quality loss.
-        max_filter_attempts: Maximum random draws per sample before raising an error.
-            Guards against infinite loops when the filter is very restrictive.
+        configs:           Pre-generated raw config dicts from sample_nas_compression_configs().
+                           When provided, ``num_data`` and ``random_seed`` are ignored for
+                           sampling purposes.
+        num_data:          Number of random configs to sample (only used when configs=None).
+        eval_subset_size:  Evaluate on a random subset of data_loader for speed.
+        max_filter_attempts: Max draws per sample before raising RuntimeError (random mode only).
 
     Returns:
         Dict mapping compression parameter names (and "metric") to lists of values.
     """
-
-    if random_seed:
+    if random_seed is not None and configs is None:
         random.seed(random_seed)
 
     if train:
@@ -165,7 +243,6 @@ def get_nas_compression_data(
         assert epochs is not None,           "if training you must pass epochs"
         assert criterion_fun is not None,    "if training you must pass criterion_fun"
 
-    # --- pre-fuse once so we never call fuse() inside the sampling loop ---
     fused_model = model.fuse()
 
     # --- build a fast eval loader (subset) for NAS metric estimation ---
@@ -182,52 +259,40 @@ def get_nas_compression_data(
         eval_loader = data_loader
 
     compression_config_data = defaultdict(list)
-    compression_possible_hp = fused_model.get_compression_possible_hyperparameters()
 
-    for _ in tqdm(range(num_data), desc=f"Generating NAS Data (1 - {num_data})"):
+    # --- decide iteration source ---
+    if configs is None:
+        configs, _ = sample_nas_compression_configs(
+            model=model,
+            input_shape=input_shape,
+            calibration_data=calibration_data,
+            n_configs=num_data,
+            filter=filter,
+            device=device,
+            random_seed=random_seed,
+            deduplicate=True,
+            max_attempts=max_filter_attempts,
+        )
 
-        # --- sample a random config that passes the hardware filter ---
-        valid    = False
-        attempts = 0
-        while not valid:
-            attempts += 1
-            if attempts > max_filter_attempts:
-                raise RuntimeError(
-                    f"Could not find a valid compression config after {max_filter_attempts} "
-                    f"attempts. The filter may be too restrictive for the current search space."
-                )
-            compression_config = {
-                config_key: random.choice(config_hp)
-                for config_key, config_hp in compression_possible_hp.items()
-            }
-            compression_config_decode = fused_model.decode_compression_dict_hyperparameter(compression_config)
-            valid = fused_model.is_compression_config_valid(
-                compression_config_decode,
-                compression_keys=["quantize"],
-                raise_error=False
-            )
-            if valid:
-                compressed_model = fused_model.init_compress(
-                    config=compression_config_decode,
-                    input_shape=input_shape,
-                    calibration_data=calibration_data,
-                    device=device
-                )
-                valid = filter(compressed_model, compression_config_decode)
+    for item in tqdm(configs, total=len(configs), desc=f"Generating NAS Data (1 - {len(configs)})"):
+
+        # item is already a raw config dict
+        compression_config        = item
+        compression_config_decode = fused_model.decode_compression_dict_hyperparameter(compression_config)
 
         # --- optional fine-tuning ---
         if train:
+            prune_config    = {"prune_channel": compression_config_decode["prune_channel"]}
+            quantize_config = {"quantize": compression_config_decode["quantize"]}
+            pruned_model = fused_model.init_compress(
+                prune_config, input_shape,
+                calibration_data=calibration_data, device=device,
+            )
+
             if two_step:
-                # compute epoch split with local variables — never mutate `epochs`
                 prune_epochs = max(1, epochs // 2)
                 quant_epochs = epochs - prune_epochs
 
-                prune_config = copy.deepcopy(compression_config_decode)
-                del prune_config["quantize"]
-                pruned_model = fused_model.init_compress(
-                    prune_config, input_shape,
-                    calibration_data=calibration_data, device=device,
-                )
 
                 optimizer_fun = optimizer_cls(pruned_model.parameters(), lr=lr, **optimizer_kwargs)
                 lr_scheduler  = lr_scheduler_cls(optimizer_fun, **lr_scheduler_kwargs)
@@ -244,14 +309,16 @@ def get_nas_compression_data(
                     device=device,
                 )
 
-                compressed_model = pruned_model.init_compress(
-                    config=compression_config_decode,
-                    input_shape=input_shape,
-                    calibration_data=calibration_data,
-                    device=device,
-                )
             else:
                 quant_epochs = epochs
+
+            
+            compressed_model = pruned_model.init_compress(
+                config=quantize_config,
+                input_shape=input_shape,
+                calibration_data=calibration_data,
+                device=device,
+            )
 
             optimizer_fun = optimizer_cls(compressed_model.parameters(), lr=lr, **optimizer_kwargs)
             lr_scheduler  = lr_scheduler_cls(optimizer_fun, **lr_scheduler_kwargs)
@@ -265,6 +332,13 @@ def get_nas_compression_data(
                 metrics={"metric": metric_fun},
                 verbose=False,
                 callbacks=callbacks,
+                device=device,
+            )
+        else:
+            compressed_model = fused_model.init_compress(
+                config=compression_config_decode,
+                input_shape=input_shape,
+                calibration_data=calibration_data,
                 device=device,
             )
 

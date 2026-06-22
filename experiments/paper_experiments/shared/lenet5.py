@@ -1,6 +1,6 @@
 import os
 
-from .. import (
+from development import (
     Sequential,
     Conv2d,
     BatchNorm2d,

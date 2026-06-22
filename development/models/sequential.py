@@ -314,9 +314,13 @@ class Sequential(nn.Sequential):
                     metrics_values[f"validation_{name}"] = metrics_result[name]
 
 
-                # Learning rate scheduling
-                if lr_scheduler is not None: 
+                # ReduceLROnPlateau needs the validation metric
+                if lr_scheduler is not None and isinstance(lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     lr_scheduler.step(validation_loss)
+            
+            # Epoch-based schedulers (CosineAnnealingLR, StepLR, etc.) step every epoch
+            if lr_scheduler is not None and not isinstance(lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                lr_scheduler.step()
 
             # Logging
                 if verbose:
@@ -350,7 +354,6 @@ class Sequential(nn.Sequential):
                 for name in metrics:
                     self.fit_history[f"train_{name}"] = self.fit_history.get(f"train_{name}", []) + [metrics_values[f"train_{name}"]]
                     history[f"train_{name}"] = history.get(f"train_{name}", []) + [metrics_values[f"train_{name}"]]
-            
             # Callbacks (e.g., EarlyStopping, ModelCheckpoint)
             for callback in callbacks:
                 if callback(self, history, epoch):
@@ -450,8 +453,7 @@ class Sequential(nn.Sequential):
                 # since the weight are not modified in place when pruning is done first
                 # before QAT
                 if self.is_pruned_channel and not force_prune_channel:
-                    warnings.warn("Model has been pruned before to force for a repruning specify force_prune_channel as True")
-                    continue
+                    raise RuntimeError("Model has been pruned before to force for a repruning specify force_prune_channel as True")
 
                 # Build masks first so weight_prune_channel exists before
                 # is_pruned_channel=True is set — prevents AttributeError in
@@ -532,7 +534,6 @@ class Sequential(nn.Sequential):
                                     )
                                 return False
                         return True
-
                     for name, layer_sparsity in sparsity.items():
                         # Skip if layer cannot be pruned
                         if self[name].get_prune_channel_possible_hyperparameters() is None:
@@ -555,11 +556,16 @@ class Sequential(nn.Sequential):
                             hp = self[name].get_prune_channel_possible_hyperparameters()
                             # hp is a dict for Block/Branch; flatten to a combined range for validation
                             if isinstance(hp, dict):
-                                # Nested dicts are not supported for validation; only the top-level values are checked
-                                all_ranges = [r for r in hp.values() if not isinstance(r, dict)]
+                                def _collect_ranges(d):
+                                    for v in d.values():
+                                        if isinstance(v, dict):
+                                            yield from _collect_ranges(v)
+                                        else:
+                                            yield v
+                                all_ranges = list(_collect_ranges(hp))
                                 valid = not all_ranges or layer_sparsity in range(min(len(r) for r in all_ranges))
                             else:
-                                valid = layer_sparsity in hp
+                                valid = hp is None or layer_sparsity in hp
                             if not valid:
                                 if raise_error:
                                     raise ValueError(f"Received a layer_sparsity of {layer_sparsity} which is out of the valid range for layer '{name}'.")
@@ -624,12 +630,12 @@ class Sequential(nn.Sequential):
                     assert len(parameter_bitwidth) == len(granularity) and parameter_bitwidth.keys() == granularity.keys(), \
                             f"the keys of parameter_bitwidth has to match with that of granularity"
 
-                    def _valid_parameter_bitwidth_leaves(d, path):
+                    def _valid_pb_leaves(d, path):
                         """Recursively validate every leaf is an int in [2, 4, 8]."""
                         for k, v in d.items():
                             full = f"{path}.{k}"
                             if isinstance(v, dict):
-                                if not _valid_parameter_bitwidth_leaves(v, full):
+                                if not _valid_pb_leaves(v, full):
                                     return False
                             elif not isinstance(v, int) or v not in [2, 4, 8]:
                                 if raise_error:
@@ -640,12 +646,12 @@ class Sequential(nn.Sequential):
                                 return False
                         return True
 
-                    def _valid_granularity_leaves(d, path):
+                    def _valid_gran_leaves(d, path):
                         """Recursively validate every leaf is a QuantizationGranularity."""
                         for k, v in d.items():
                             full = f"{path}.{k}"
                             if isinstance(v, dict):
-                                if not _valid_granularity_leaves(v, full):
+                                if not _valid_gran_leaves(v, full):
                                     return False
                             elif not isinstance(v, QuantizationGranularity):
                                 if raise_error:
@@ -662,9 +668,9 @@ class Sequential(nn.Sequential):
                                 raise NameError(f"Found unknown layer name {layer_name}")
                             return False
                         if isinstance(layer_parameter_bitwidth, dict):
-                            if not _valid_parameter_bitwidth_leaves(layer_parameter_bitwidth, layer_name):
+                            if not _valid_pb_leaves(layer_parameter_bitwidth, layer_name):
                                 return False
-                            if not _valid_granularity_leaves(layer_granularity, layer_name):
+                            if not _valid_gran_leaves(layer_granularity, layer_name):
                                 return False
                         else:
                             if not isinstance(layer_parameter_bitwidth, int):
