@@ -448,6 +448,27 @@ def launch_experiment(
         logger.info(f"  checkpoint: {exp.checkpoint_gcs_uri}")
 
 
+# ── Reset ────────────────────────────────────────────────────────────────────
+
+def reset_experiment(exp: NASExperiment) -> None:
+    """Delete the GCS checkpoint and reset the local pool head to 0."""
+    if gcs_exists(exp.checkpoint_gcs_uri):
+        logger.info(f"Deleting checkpoint: {exp.checkpoint_gcs_uri}")
+        _run(["gsutil", "rm", exp.checkpoint_gcs_uri], "Failed to delete checkpoint")
+    else:
+        logger.info("No checkpoint found on GCS — nothing to delete.")
+
+    if os.path.exists(exp.local_pool_path):
+        pool_data = torch.load(exp.local_pool_path, weights_only=False)
+        pool_data["head"] = 0
+        torch.save(pool_data, exp.local_pool_path)
+        logger.info(f"Pool head reset to 0: {exp.local_pool_path}")
+    else:
+        logger.warning(f"Local pool not found: {exp.local_pool_path}")
+
+    logger.info("Reset complete — next launch will start from config 0.")
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -456,6 +477,8 @@ def main() -> None:
                         help="Experiment to run: " + ", ".join(EXPERIMENTS))
     parser.add_argument("--status",      action="store_true",
                         help="Print job status only — do not launch anything")
+    parser.add_argument("--reset",       action="store_true",
+                        help="Clear checkpoint and reset pool head to 0 so the next run starts fresh")
     parser.add_argument("--dry_run",     action="store_true",
                         help="Print what would be launched without submitting")
     parser.add_argument("--sync",        action="store_true",
@@ -480,15 +503,20 @@ def main() -> None:
 
     exp = EXPERIMENTS[args.experiment]
 
-    logger.info(f"Experiment  : {exp.key}")
-    logger.info(f"Location    : {args.location}")
-    logger.info(f"Jobs        : {args.n_jobs}  ({args.configs_per_job} configs each"
-                f" = {args.n_jobs * args.configs_per_job} total NAS samples)")
+    logger.info(f"Experiment : {exp.key}  |  Location: {args.location}")
 
     # Status-only mode
     if args.status:
         print_status(exp)
         return
+
+    # Reset mode — wipe checkpoint and pool head
+    if args.reset:
+        reset_experiment(exp)
+        return
+
+    logger.info(f"Jobs       : {args.n_jobs}  ({args.configs_per_job} configs each"
+                f" = {args.n_jobs * args.configs_per_job} total NAS samples)")
 
     # Build & upload package once
     if not args.skip_build and not args.dry_run:
