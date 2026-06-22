@@ -318,6 +318,7 @@ def get_nas_compression_data(
                     config=compression_config_decode,
                     input_shape=input_shape,
                     calibration_data=calibration_data,
+                    force_prune_channel=True,
                     device=device,
                 )
             else:
