@@ -64,7 +64,7 @@ def main():
                         help="First config index to process (inclusive)")
     parser.add_argument("--end",            type=int, required=True,
                         help="Last config index to process (exclusive)")
-    parser.add_argument("--pool_file",      type=str, default="config_pool.pth",
+    parser.add_argument("--pool_file",      type=str, default="gcp_nas_config_pool.pth",
                         help="Local pool file name (or full path)")
     parser.add_argument("--pool_gcs_uri",   type=str, default=None,
                         help="GCS URI to download the pool file from (cloud runs)")
