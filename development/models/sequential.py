@@ -453,8 +453,7 @@ class Sequential(nn.Sequential):
                 # since the weight are not modified in place when pruning is done first
                 # before QAT
                 if self.is_pruned_channel and not force_prune_channel:
-                    warnings.warn("Model has been pruned before to force for a repruning specify force_prune_channel as True")
-                    continue
+                    raise RuntimeError("Model has been pruned before to force for a repruning specify force_prune_channel as True")
 
                 # Build masks first so weight_prune_channel exists before
                 # is_pruned_channel=True is set — prevents AttributeError in
