@@ -50,7 +50,8 @@ import torch
 # ---------------------------------------------------------------------------
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT", "valued-lambda-490314-q3")
-GCS_BUCKET     = os.environ.get("GCS_BUCKET", "dmc-nas-data")
+GCS_BUCKET     = os.environ.get("GCS_BUCKET", "nilm-490314-q3")
+GCS_PREFIX     = "dmc-nas-data"  # subdirectory within the shared bucket
 
 # Jobs are spread round-robin across these locations (5 jobs per location for 20 total)
 LOCATIONS: List[str] = [
@@ -67,7 +68,7 @@ CONTAINER_URI = "us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-4.py310:late
 PACKAGE_NAME    = "deep_microcompression"
 PACKAGE_VERSION = "0.1.0"
 LOCAL_DIST_PATH = f"dist/{PACKAGE_NAME}-{PACKAGE_VERSION}.tar.gz"
-GCS_PACKAGE_URI = f"gs://{GCS_BUCKET}/packages/{PACKAGE_NAME}-{PACKAGE_VERSION}.tar.gz"
+GCS_PACKAGE_URI = f"gs://{GCS_BUCKET}/{GCS_PREFIX}/packages/{PACKAGE_NAME}-{PACKAGE_VERSION}.tar.gz"
 
 
 # ---------------------------------------------------------------------------
@@ -84,20 +85,24 @@ class NASExperiment:
     needs_baseline: bool = False
 
     @property
+    def _gcs_base(self) -> str:
+        return f"gs://{GCS_BUCKET}/{GCS_PREFIX}/{self.gcs_subdir}"
+
+    @property
     def pool_gcs_uri(self) -> str:
-        return f"gs://{GCS_BUCKET}/{self.gcs_subdir}/config_pool.pth"
+        return f"{self._gcs_base}/config_pool.pth"
 
     @property
     def baseline_gcs_uri(self) -> str:
-        return f"gs://{GCS_BUCKET}/{self.gcs_subdir}/baseline.pth"
+        return f"{self._gcs_base}/baseline.pth"
 
     @property
     def output_gcs_dir(self) -> str:
-        return f"gs://{GCS_BUCKET}/{self.gcs_subdir}/results/"
+        return f"{self._gcs_base}/results/"
 
     @property
     def checkpoint_gcs_uri(self) -> str:
-        return f"gs://{GCS_BUCKET}/{self.gcs_subdir}/launch_checkpoint.json"
+        return f"{self._gcs_base}/launch_checkpoint.json"
 
     @property
     def local_pool_path(self) -> str:
@@ -279,18 +284,23 @@ def upload_experiment_assets(exp: NASExperiment, dry_run: bool) -> None:
 # ── Vertex AI helpers ────────────────────────────────────────────────────────
 
 def _staging_bucket(location: str) -> str:
-    """Return (and create if needed) a regional staging bucket."""
-    bucket_name = f"{GCS_BUCKET}-staging-{location}"
+    """Return (and create if needed) a regional Vertex AI staging bucket."""
+    bucket_name = f"nilm-vertex-{location}"
     uri = f"gs://{bucket_name}"
     result = subprocess.run(
-        ["gsutil", "ls", "-b", uri], capture_output=True, text=True,
+        ["gcloud", "storage", "buckets", "describe", uri, "--format=value(name)"],
+        capture_output=True, text=True,
     )
     if result.returncode != 0:
-        logger.info(f"Creating staging bucket {uri} …")
+        logger.info(f"Creating staging bucket {uri} in {location} …")
         _run(
-            ["gsutil", "mb", "-l", location, "-p", GCP_PROJECT_ID, uri],
+            ["gcloud", "storage", "buckets", "create", uri,
+             f"--location={location}",
+             f"--project={GCP_PROJECT_ID}",
+             "--uniform-bucket-level-access"],
             f"Failed to create staging bucket {uri}",
         )
+        logger.info(f"Staging bucket created: {uri}")
     return uri
 
 
@@ -326,7 +336,10 @@ def launch_vertexai_job(
         sync=sync,
     )
     logger.info(f"Launched [{location}]: {display_name}")
-    return job.resource_name or display_name
+    try:
+        return job.resource_name or display_name
+    except RuntimeError:
+        return display_name
 
 
 # ── Status command ───────────────────────────────────────────────────────────
