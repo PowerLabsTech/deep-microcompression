@@ -147,13 +147,14 @@ def main(defaults=None):
         save_data["width_mult"] = args.width_mult
 
     os.makedirs(args.out_dir, exist_ok=True)
-    out_path = os.path.join(args.out_dir, args.out)
+    out_path  = os.path.join(args.out_dir, args.out)
+
     torch.save(save_data, out_path)
 
     print(f"\nSaved {len(pool)} unique configs → {out_path}")
     print(f"\nUsage with 20 jobs of 50 configs each:")
-    print(f"  python generate_nas_data.py --job_id 0   --pool_file {args.out}")
-    print(f"  ...  (up to --job_id {len(pool)//50 - 1})")
+    print(f"  python generate_nas_data.py --start 0 --end 50 --pool_file {args.out}")
+    print(f"  ...  (up to --start {len(pool) - 50} --end {len(pool)})")
 
 
 if __name__ == "__main__":
