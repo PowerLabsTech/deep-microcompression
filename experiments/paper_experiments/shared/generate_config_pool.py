@@ -141,6 +141,7 @@ def main(defaults=None):
         "seed":        args.seed,
         "hardware":    hardware["name"],
         "input_shape": input_shape,
+        "head":        0
     }
     if args.model == "mobilenetv1":
         save_data["width_mult"] = args.width_mult
