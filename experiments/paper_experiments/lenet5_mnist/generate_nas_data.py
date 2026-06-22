@@ -64,11 +64,13 @@ def main():
                         help="First config index to process (inclusive)")
     parser.add_argument("--end",            type=int, required=True,
                         help="Last config index to process (exclusive)")
-    parser.add_argument("--pool_file",      type=str, default="gcp_nas_config_pool.pth",
+    parser.add_argument("--pool_file",      type=str, default="config_pool.pth",
                         help="Local pool file name (or full path)")
-    parser.add_argument("--pool_gcs_uri",   type=str, default=None,
+    parser.add_argument("--pool_gcs_uri",     type=str, default=None,
                         help="GCS URI to download the pool file from (cloud runs)")
-    parser.add_argument("--output_gcs_dir", type=str, default=None,
+    parser.add_argument("--baseline_gcs_uri", type=str, default=None,
+                        help="GCS URI to download baseline.pth from (cloud runs)")
+    parser.add_argument("--output_gcs_dir",   type=str, default=None,
                         help="GCS URI prefix to upload results to after completion")
     args = parser.parse_args()
 
@@ -108,10 +110,15 @@ def main():
     metric_fn        = get_metric()
     calibration_data = next(iter(train_loader))[0].to(device)
 
-    baseline_ckpt = os.path.join(_HERE, "models", "baseline.pth")
-    if not os.path.exists(baseline_ckpt):
-        print("ERROR: models/baseline.pth not found — run train_baseline.py first.")
-        sys.exit(1)
+    if args.baseline_gcs_uri:
+        baseline_ckpt = "/tmp/baseline.pth"
+        print(f"Downloading baseline from {args.baseline_gcs_uri} …")
+        _gcs_cp(args.baseline_gcs_uri, baseline_ckpt)
+    else:
+        baseline_ckpt = os.path.join(_HERE, "models", "baseline.pth")
+        if not os.path.exists(baseline_ckpt):
+            print("ERROR: models/baseline.pth not found — run train_baseline.py first.")
+            sys.exit(1)
     baseline_model = get_model().to(device)
     baseline_model.load_state_dict(
         torch.load(baseline_ckpt, weights_only=True)["model"]
