@@ -153,38 +153,41 @@ def sample_nas_compression_configs(
     seen     = set()
     attempts = 0
 
-    while len(pool) < n_configs:
-        attempts += 1
-        if attempts > max_attempts:
-            raise RuntimeError(
-                f"Could not generate {n_configs} unique valid configs after {max_attempts} "
-                f"attempts. Found {len(pool)}. The filter may be too restrictive."
-            )
+    with tqdm(total=n_configs, desc="Sampling configs") as pbar:
+        while len(pool) < n_configs:
+            attempts += 1
+            if attempts > max_attempts:
+                raise RuntimeError(
+                    f"Could not generate {n_configs} unique valid configs after {max_attempts} "
+                    f"attempts. Found {len(pool)}. The filter may be too restrictive."
+                )
 
-        compression_config = {
-            config_key: random.choice(list(config_hp))
-            for config_key, config_hp in compression_possible_hp.items()
-        }
-        if deduplicate:
-            key = str(sorted(compression_config.items()))
-            if key in seen:
+            compression_config = {
+                config_key: random.choice(list(config_hp))
+                for config_key, config_hp in compression_possible_hp.items()
+            }
+            if deduplicate:
+                key = str(sorted(compression_config.items()))
+                if key in seen:
+                    continue
+
+            decoded = fused_model.decode_compression_dict_hyperparameter(compression_config)
+            if not fused_model.is_compression_config_valid(
+                decoded, raise_error=False
+            ):
                 continue
 
-        decoded = fused_model.decode_compression_dict_hyperparameter(compression_config)
-        if not fused_model.is_compression_config_valid(
-            decoded, raise_error=False
-        ):
-            continue
+            compressed = fused_model.init_compress(
+                decoded, input_shape, calibration_data=calibration_data, device=device
+            )
+            if not filter(compressed, decoded):
+                continue
 
-        compressed = fused_model.init_compress(
-            decoded, input_shape, calibration_data=calibration_data, device=device
-        )
-        if not filter(compressed, decoded):
-            continue
-
-        if deduplicate:
-            seen.add(key)
-        pool.append(compression_config)
+            if deduplicate:
+                seen.add(key)
+            pool.append(compression_config)
+            pbar.update(1)
+            pbar.set_postfix(attempts=attempts, hit_rate=f"{len(pool)/attempts*100:.1f}%")
 
     return pool, attempts
 
@@ -274,7 +277,8 @@ def get_nas_compression_data(
             max_attempts=max_filter_attempts,
         )
 
-    for item in tqdm(configs, total=len(configs), desc=f"Generating NAS Data (1 - {len(configs)})"):
+    pbar = tqdm(configs, total=len(configs), desc="NAS data")
+    for item in pbar:
 
         # item is already a raw config dict
         compression_config        = item
@@ -284,6 +288,8 @@ def get_nas_compression_data(
         if train:
             prune_config    = {"prune_channel": compression_config_decode["prune_channel"]}
             quantize_config = {"quantize": compression_config_decode["quantize"]}
+
+            pbar.set_postfix(phase="pruning")
             pruned_model = fused_model.init_compress(
                 prune_config, input_shape,
                 calibration_data=calibration_data, device=device,
@@ -293,7 +299,7 @@ def get_nas_compression_data(
                 prune_epochs = max(1, epochs // 2)
                 quant_epochs = epochs - prune_epochs
 
-
+                pbar.set_postfix(phase=f"prune-train ({prune_epochs}ep)")
                 optimizer_fun = optimizer_cls(pruned_model.parameters(), lr=lr, **optimizer_kwargs)
                 lr_scheduler  = lr_scheduler_cls(optimizer_fun, **lr_scheduler_kwargs)
                 pruned_model.fit(
@@ -305,6 +311,7 @@ def get_nas_compression_data(
                     validation_dataloader=eval_loader,
                     metrics={"metric": metric_fun},
                     verbose=False,
+                    progress=False,
                     callbacks=callbacks,
                     device=device,
                 )
@@ -312,7 +319,7 @@ def get_nas_compression_data(
             else:
                 quant_epochs = epochs
 
-            
+            pbar.set_postfix(phase="quantizing")
             compressed_model = pruned_model.init_compress(
                 config=quantize_config,
                 input_shape=input_shape,
@@ -320,6 +327,7 @@ def get_nas_compression_data(
                 device=device,
             )
 
+            pbar.set_postfix(phase=f"quant-train ({quant_epochs}ep)")
             optimizer_fun = optimizer_cls(compressed_model.parameters(), lr=lr, **optimizer_kwargs)
             lr_scheduler  = lr_scheduler_cls(optimizer_fun, **lr_scheduler_kwargs)
             compressed_model.fit(
@@ -331,10 +339,12 @@ def get_nas_compression_data(
                 validation_dataloader=eval_loader,
                 metrics={"metric": metric_fun},
                 verbose=False,
+                progress=False,
                 callbacks=callbacks,
                 device=device,
             )
         else:
+            pbar.set_postfix(phase="compressing")
             compressed_model = fused_model.init_compress(
                 config=compression_config_decode,
                 input_shape=input_shape,
@@ -342,6 +352,7 @@ def get_nas_compression_data(
                 device=device,
             )
 
+        pbar.set_postfix(phase="evaluating")
         compressed_model_metric = compressed_model.evaluate(
             data_loader=eval_loader, metrics={"metric": metric_fun}, device=device,
         )

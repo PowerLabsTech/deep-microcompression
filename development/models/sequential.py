@@ -244,6 +244,7 @@ class Sequential(nn.Sequential):
         validation_dataloader: Optional[data.DataLoader] = None, 
         metrics: Dict[str, Callable[[torch.Tensor, torch.Tensor], float]] = {},
         verbose: bool = True,
+        progress: bool = True,
         callbacks: List[Callable] = [],
         batch_size = 32,
         device: str = "cpu"
@@ -276,7 +277,7 @@ class Sequential(nn.Sequential):
         history = dict()
         metrics_values = dict()
 
-        for epoch in tqdm(range(epochs), desc=f"DMC Training (Epochs 1-{epochs})"):
+        for epoch in tqdm(range(epochs), desc=f"DMC Training (Epochs 1-{epochs})", disable=not progress, leave=False):
             # Training phase
             train_loss = 0
             train_data_len = 0
