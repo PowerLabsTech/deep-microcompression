@@ -30,7 +30,7 @@ sys.path.insert(0, _PROJ_ROOT)
 sys.path.insert(0, _HERE)
 
 from development import sample_nas_compression_configs
-from hardware_specs import ATMEGA328P, ATMEGA2560, make_nas_filter
+from hardware_specs import ATMEGA328P, ATMEGA2560, make_pool_filter
 
 _REGISTRY = {
     "lenet5": {
@@ -119,7 +119,7 @@ def main(defaults=None):
         print(f"Loading {args.model} pretrained weights …")
         baseline_model = model_mod.get_model().to(device)
 
-    nas_filter = make_nas_filter(hardware, input_shape)
+    nas_filter = make_pool_filter(hardware, input_shape)
 
     print("Sampling unique valid configs …")
     start_time = time.time()

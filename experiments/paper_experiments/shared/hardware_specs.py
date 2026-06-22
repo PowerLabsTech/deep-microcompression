@@ -33,11 +33,34 @@ ATMEGA2560 = {
 # Filter / condition factories
 # ---------------------------------------------------------------------------
 
+def make_pool_filter(hw: dict, input_shape: tuple):
+    """
+    Filter for config pool generation (sample_nas_compression_configs).
+    Uses the raw sram_bytes / flash_bytes limits so the pool captures configs
+    at the compression edges, giving the NAS surrogate a richer training distribution.
+    """
+    from development import QuantizationScheme, Sequential
+
+    sram  = hw["sram_bytes"]
+    flash = hw["flash_bytes"]
+
+    def pool_filter(compressed_model: Sequential, compression_config: dict) -> bool:
+        if compression_config["quantize"]["scheme"] != QuantizationScheme.STATIC:
+            return False
+        if compressed_model.get_workspace_size(input_shape) > sram:
+            return False
+        if compressed_model.get_size_in_bytes() > flash:
+            return False
+        return True
+
+    return pool_filter
+
+
 def make_nas_filter(hw: dict, input_shape: tuple):
     """
-    Returns a filter callable for get_nas_compression_data().
-    Rejects configs that would exceed the board's workspace or weight budget,
-    or that don't use static quantization (required for integer-only inference).
+    Filter for board deployment search (get_nas_compression_data).
+    Uses workspace_budget / weight_budget (raw limits minus headroom for stack
+    and inference code), ensuring deployed models fit safely on the board.
     """
     from development import QuantizationScheme, Sequential
 
