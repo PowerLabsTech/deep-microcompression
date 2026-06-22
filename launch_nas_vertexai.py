@@ -452,6 +452,15 @@ def launch_experiment(
 
 def reset_experiment(exp: NASExperiment) -> None:
     """Delete the GCS checkpoint and reset the local pool head to 0."""
+    print(f"\nThis will delete the checkpoint for '{exp.key}' and reset the pool head to 0.")
+    print(f"  checkpoint : {exp.checkpoint_gcs_uri}")
+    print(f"  pool       : {exp.local_pool_path}")
+    expected = f"yes, I am sure I want to reset {exp.key}."
+    confirm = input(f"Type '{expected}' to confirm: ").strip().lower()
+    if confirm != expected:
+        logger.info("Reset cancelled.")
+        return
+
     if gcs_exists(exp.checkpoint_gcs_uri):
         logger.info(f"Deleting checkpoint: {exp.checkpoint_gcs_uri}")
         _run(["gsutil", "rm", exp.checkpoint_gcs_uri], "Failed to delete checkpoint")
