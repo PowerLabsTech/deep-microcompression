@@ -354,7 +354,8 @@ def get_nas_compression_data(
 
         pbar.set_postfix(phase="evaluating")
         compressed_model_metric = compressed_model.evaluate(
-            data_loader=eval_loader, metrics={"metric": metric_fun}, device=device,
+            data_loader=eval_loader, metrics={"metric": metric_fun},
+            device=device, progress=False
         )
 
         for config_key, config_value in compression_config.items():
