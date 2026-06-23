@@ -244,6 +244,7 @@ class Sequential(nn.Sequential):
         validation_dataloader: Optional[data.DataLoader] = None, 
         metrics: Dict[str, Callable[[torch.Tensor, torch.Tensor], float]] = {},
         verbose: bool = True,
+        progress: bool = True,
         callbacks: List[Callable] = [],
         batch_size = 32,
         device: str = "cpu"
@@ -276,7 +277,7 @@ class Sequential(nn.Sequential):
         history = dict()
         metrics_values = dict()
 
-        for epoch in tqdm(range(epochs), desc=f"DMC Training (Epochs 1-{epochs})"):
+        for epoch in tqdm(range(epochs), desc=f"DMC Training (Epochs 1-{epochs})", disable=not progress, leave=False):
             # Training phase
             train_loss = 0
             train_data_len = 0
@@ -308,7 +309,7 @@ class Sequential(nn.Sequential):
             # Validation phase
             if validation_dataloader is not None:
                 self.eval()
-                metrics_result = self.evaluate(validation_dataloader, metrics | {"loss": criterion_fun}, device)
+                metrics_result = self.evaluate(validation_dataloader, metrics | {"loss": criterion_fun}, device=device)
                 validation_loss = metrics_result["loss"]
                 for name in metrics.keys():
                     metrics_values[f"validation_{name}"] = metrics_result[name]
@@ -366,7 +367,8 @@ class Sequential(nn.Sequential):
     def evaluate(
         self, 
         data_loader: data.DataLoader, 
-        metrics: Dict[str, Callable[[torch.Tensor, torch.Tensor], float]], 
+        metrics: Dict[str, Callable[[torch.Tensor, torch.Tensor], float]],
+        progress: bool = True,
         device: str = "cpu"
     ) -> Dict[str, float]:
         """
@@ -386,7 +388,7 @@ class Sequential(nn.Sequential):
             metric_results[metric_name] = 0
             
         self.eval()
-        for X, y_true in tqdm(data_loader, desc="Evaluating", leave=False):
+        for X, y_true in tqdm(data_loader, desc="Evaluating", leave=False, disable=not progress):
             X = X.to(device)
             y_true = y_true.to(device)
             y_pred = self(X)

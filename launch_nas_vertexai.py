@@ -50,7 +50,8 @@ import torch
 # ---------------------------------------------------------------------------
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT", "valued-lambda-490314-q3")
-GCS_BUCKET     = os.environ.get("GCS_BUCKET", "dmc-nas-data")
+GCS_BUCKET     = os.environ.get("GCS_BUCKET", "nilm-490314-q3")
+GCS_PREFIX     = "dmc-nas-data"  # subdirectory within the shared bucket
 
 # Jobs are spread round-robin across these locations (5 jobs per location for 20 total)
 LOCATIONS: List[str] = [
@@ -67,7 +68,7 @@ CONTAINER_URI = "us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-4.py310:late
 PACKAGE_NAME    = "deep_microcompression"
 PACKAGE_VERSION = "0.1.0"
 LOCAL_DIST_PATH = f"dist/{PACKAGE_NAME}-{PACKAGE_VERSION}.tar.gz"
-GCS_PACKAGE_URI = f"gs://{GCS_BUCKET}/packages/{PACKAGE_NAME}-{PACKAGE_VERSION}.tar.gz"
+GCS_PACKAGE_URI = f"gs://{GCS_BUCKET}/{GCS_PREFIX}/packages/{PACKAGE_NAME}-{PACKAGE_VERSION}.tar.gz"
 
 
 # ---------------------------------------------------------------------------
@@ -84,20 +85,24 @@ class NASExperiment:
     needs_baseline: bool = False
 
     @property
+    def _gcs_base(self) -> str:
+        return f"gs://{GCS_BUCKET}/{GCS_PREFIX}/{self.gcs_subdir}"
+
+    @property
     def pool_gcs_uri(self) -> str:
-        return f"gs://{GCS_BUCKET}/{self.gcs_subdir}/config_pool.pth"
+        return f"{self._gcs_base}/config_pool.pth"
 
     @property
     def baseline_gcs_uri(self) -> str:
-        return f"gs://{GCS_BUCKET}/{self.gcs_subdir}/baseline.pth"
+        return f"{self._gcs_base}/baseline.pth"
 
     @property
     def output_gcs_dir(self) -> str:
-        return f"gs://{GCS_BUCKET}/{self.gcs_subdir}/results/"
+        return f"{self._gcs_base}/results/"
 
     @property
     def checkpoint_gcs_uri(self) -> str:
-        return f"gs://{GCS_BUCKET}/{self.gcs_subdir}/launch_checkpoint.json"
+        return f"{self._gcs_base}/launch_checkpoint.json"
 
     @property
     def local_pool_path(self) -> str:
@@ -279,18 +284,23 @@ def upload_experiment_assets(exp: NASExperiment, dry_run: bool) -> None:
 # ── Vertex AI helpers ────────────────────────────────────────────────────────
 
 def _staging_bucket(location: str) -> str:
-    """Return (and create if needed) a regional staging bucket."""
-    bucket_name = f"{GCS_BUCKET}-staging-{location}"
+    """Return (and create if needed) a regional Vertex AI staging bucket."""
+    bucket_name = f"nilm-vertex-{location}"
     uri = f"gs://{bucket_name}"
     result = subprocess.run(
-        ["gsutil", "ls", "-b", uri], capture_output=True, text=True,
+        ["gcloud", "storage", "buckets", "describe", uri, "--format=value(name)"],
+        capture_output=True, text=True,
     )
     if result.returncode != 0:
-        logger.info(f"Creating staging bucket {uri} …")
+        logger.info(f"Creating staging bucket {uri} in {location} …")
         _run(
-            ["gsutil", "mb", "-l", location, "-p", GCP_PROJECT_ID, uri],
+            ["gcloud", "storage", "buckets", "create", uri,
+             f"--location={location}",
+             f"--project={GCP_PROJECT_ID}",
+             "--uniform-bucket-level-access"],
             f"Failed to create staging bucket {uri}",
         )
+        logger.info(f"Staging bucket created: {uri}")
     return uri
 
 
@@ -326,7 +336,10 @@ def launch_vertexai_job(
         sync=sync,
     )
     logger.info(f"Launched [{location}]: {display_name}")
-    return job.resource_name or display_name
+    try:
+        return job.resource_name or display_name
+    except RuntimeError:
+        return display_name
 
 
 # ── Status command ───────────────────────────────────────────────────────────
@@ -435,6 +448,36 @@ def launch_experiment(
         logger.info(f"  checkpoint: {exp.checkpoint_gcs_uri}")
 
 
+# ── Reset ────────────────────────────────────────────────────────────────────
+
+def reset_experiment(exp: NASExperiment) -> None:
+    """Delete the GCS checkpoint and reset the local pool head to 0."""
+    print(f"\nThis will delete the checkpoint for '{exp.key}' and reset the pool head to 0.")
+    print(f"  checkpoint : {exp.checkpoint_gcs_uri}")
+    print(f"  pool       : {exp.local_pool_path}")
+    expected = f"yes, I am sure I want to reset {exp.key}."
+    confirm = input(f"Type '{expected}' to confirm: ").strip().lower()
+    if confirm != expected:
+        logger.info("Reset cancelled.")
+        return
+
+    if gcs_exists(exp.checkpoint_gcs_uri):
+        logger.info(f"Deleting checkpoint: {exp.checkpoint_gcs_uri}")
+        _run(["gsutil", "rm", exp.checkpoint_gcs_uri], "Failed to delete checkpoint")
+    else:
+        logger.info("No checkpoint found on GCS — nothing to delete.")
+
+    if os.path.exists(exp.local_pool_path):
+        pool_data = torch.load(exp.local_pool_path, weights_only=False)
+        pool_data["head"] = 0
+        torch.save(pool_data, exp.local_pool_path)
+        logger.info(f"Pool head reset to 0: {exp.local_pool_path}")
+    else:
+        logger.warning(f"Local pool not found: {exp.local_pool_path}")
+
+    logger.info("Reset complete — next launch will start from config 0.")
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -443,6 +486,8 @@ def main() -> None:
                         help="Experiment to run: " + ", ".join(EXPERIMENTS))
     parser.add_argument("--status",      action="store_true",
                         help="Print job status only — do not launch anything")
+    parser.add_argument("--reset",       action="store_true",
+                        help="Clear checkpoint and reset pool head to 0 so the next run starts fresh")
     parser.add_argument("--dry_run",     action="store_true",
                         help="Print what would be launched without submitting")
     parser.add_argument("--sync",        action="store_true",
@@ -467,15 +512,20 @@ def main() -> None:
 
     exp = EXPERIMENTS[args.experiment]
 
-    logger.info(f"Experiment  : {exp.key}")
-    logger.info(f"Location    : {args.location}")
-    logger.info(f"Jobs        : {args.n_jobs}  ({args.configs_per_job} configs each"
-                f" = {args.n_jobs * args.configs_per_job} total NAS samples)")
+    logger.info(f"Experiment : {exp.key}  |  Location: {args.location}")
 
     # Status-only mode
     if args.status:
         print_status(exp)
         return
+
+    # Reset mode — wipe checkpoint and pool head
+    if args.reset:
+        reset_experiment(exp)
+        return
+
+    logger.info(f"Jobs       : {args.n_jobs}  ({args.configs_per_job} configs each"
+                f" = {args.n_jobs * args.configs_per_job} total NAS samples)")
 
     # Build & upload package once
     if not args.skip_build and not args.dry_run:

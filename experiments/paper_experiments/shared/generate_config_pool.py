@@ -86,6 +86,8 @@ def main(defaults=None):
                         help="Path to baseline.pth (required for lenet5 and mobilenetv1)")
     parser.add_argument("--width_mult",   type=float, default=0.5,
                         help="Width multiplier (mobilenetv1 only)")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
+                        help="The device to put the model for the config generation")
     if defaults:
         parser.set_defaults(**defaults)
     args = parser.parse_args()
@@ -97,13 +99,12 @@ def main(defaults=None):
     hardware    = cfg["hardware"]
     input_shape = cfg["input_shape"]
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     suffix = f" | α={args.width_mult}" if args.model == "mobilenetv1" else ""
-    print(f"Model: {args.model} | Seed: {args.seed} | Device: {device} | Target: {args.n_configs} configs{suffix}")
+    print(f"Model: {args.model} | Seed: {args.seed} | Device: {args.device} | Target: {args.n_configs} configs{suffix}")
 
     data_mod         = importlib.import_module(cfg["data_module"])
     train_loader, _  = data_mod.get_data_loaders()
-    calibration_data = next(iter(train_loader))[0].to(device)
+    calibration_data = next(iter(train_loader))[0].to(args.device)
 
     model_mod = importlib.import_module(cfg["model_module"])
     if cfg["needs_baseline"]:
@@ -113,11 +114,11 @@ def main(defaults=None):
             print("Pass --baseline <path> or run reproduce.ipynb first.")
             sys.exit(1)
         kwargs = {"width_mult": args.width_mult} if args.model == "mobilenetv1" else {}
-        baseline_model = model_mod.get_model(**kwargs).to(device)
+        baseline_model = model_mod.get_model(**kwargs).to(args.device)
         baseline_model.load_state_dict(torch.load(baseline_path, weights_only=True)["model"])
     else:
         print(f"Loading {args.model} pretrained weights …")
-        baseline_model = model_mod.get_model().to(device)
+        baseline_model = model_mod.get_model().to(args.device)
 
     nas_filter = make_pool_filter(hardware, input_shape)
 
@@ -127,7 +128,7 @@ def main(defaults=None):
         baseline_model, input_shape, calibration_data,
         n_configs=args.n_configs,
         filter=nas_filter,
-        device=device,
+        device=args.device,
         random_seed=args.seed,
         deduplicate=True,
         max_attempts=args.max_attempts,
