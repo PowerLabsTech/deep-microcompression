@@ -31,6 +31,8 @@ from ..utils import (
 
 class Branch(Layer, nn.Module):
 
+    # FIXME: This should be non scale modifing layer, another list should be
+    #        create for non output shape modifying layer
     NON_OUTPUT_MODIFYING_LAYERS = (
         AvgPool2d,
         BatchNorm2d,
@@ -53,6 +55,19 @@ class Branch(Layer, nn.Module):
         self.sublayer1 = sublayer1
         self.sublayer2 = sublayer2
 
+        if self.sublayer2 is not None:
+            sublayer1_output_shape = self.sublayer1.get_output_tensor_shape()
+            sublayer2_output_shape = self.sublayer2.get_output_tensor_shape()
+            assert sublayer1_output_shape == sublayer2_output_shape, (
+                f"The output shape of output of sublayer1 {self.sublayer1}: {sublayer1_output_shape}"
+                f" and sublayer2 {self.sublayer2}: {sublayer1_output_shape} aren't the same."
+            )
+        else:
+            assert self.sublayer1 in self.NON_OUTPUT_MODIFYING_LAYERS, (
+                f"If sublayer2 is None, sublayer1 must be a layer that changes the input shape, got {self.sublayer2}"
+            )
+            
+
     def forward(self, input):
 
         output1 = self.sublayer1(input)
@@ -63,7 +78,7 @@ class Branch(Layer, nn.Module):
             output2 = input
 
         assert output1.size() == output2.size(), (
-            f"The output shape of output of submodule1 {output1.size()}"
+            f"The output shape of submodule1 {output1.size()}"
             f" and submodule2 {output2.size()} aren't the same."
         )
 
@@ -192,12 +207,35 @@ class Branch(Layer, nn.Module):
         # branch1/branch2_quantize carry s1/z1 and s2/z2 for the C engine.
         # output_quantize calibrates from the actual post-addition distribution.
         setattr(self, "branch1_quantize", next_output_quantize1)
-        setattr(self, "branch2_quantize", next_output_quantize2)
+        if self.sublayer2 is not None:
+            setattr(self, "branch2_quantize", next_output_quantize2)
+        else:
+            setattr(self, "branch2_quantize", previous_output_quantize)
         setattr(self, "output_quantize", Quantize(
             self, activation_bitwidth, scheme, QuantizationGranularity.PER_TENSOR,
             scale_type=QuantizationScaleType.ASSYMMETRIC
         ))
         return self.output_quantize
+
+    def get_quantization_output_parameters(self):
+        if not self.is_quantized():
+            return
+
+        scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+        if scheme != QuantizationScheme.STATIC:
+            return
+        
+        if hasattr(self, "branch1_quantize") and hasattr(self, "output_quantize"):
+            s1_so = self.branch1_quantize.scale / self.output_quantize.scale
+            s1z1 = self.branch1_quantize.scale * self.branch1_quantize.zero_point
+
+        if hasattr(self, "branch2_quantize") and hasattr(self, "output_quantize"):
+            s2_so = self.branch2_quantize.scale / self.output_quantize.scale
+            s2z2 = self.branch2_quantize.scale * self.branch2_quantize.zero_point
+
+        z_o = int(self.output_quantize.zero_point - ((s1z1 + s2z2) / self.output_quantize.scale))
+        return s1_so, s2_so, round(z_o)
+
 
 
 
@@ -209,6 +247,7 @@ class Branch(Layer, nn.Module):
             if (hp := self.sublayer2.get_prune_channel_possible_hyperparameters()) is not None:
                 result["sublayer2"] = hp
         return result if result else None
+
 
     def get_quantize_possible_hyperparameters(self):
         result = {}
@@ -230,20 +269,21 @@ class Branch(Layer, nn.Module):
         if self.sublayer2 is not None:
             size += self.sublayer2.get_size_in_bits()
         if self.is_compressed and self.is_quantized:
-            if hasattr(self, "branch1_quantize"):
-                size += get_size_in_bits(self.branch1_quantize.scale)
-                size += get_size_in_bits(self.branch1_quantize.zero_point)
-            if hasattr(self, "output_quantize"):
-                size += get_size_in_bits(self.output_quantize.scale)
-                size += get_size_in_bits(self.output_quantize.zero_point)
+            quantization_parameters = self.get_quantization_output_parameters()
+
+            if quantization_parameters is not None:
+                for param in quantization_parameters:
+                    size += get_size_in_bits(param)
         return size
 
 
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        workspace_size = self.sublayer1.get_workspace_size(input_shape, data_per_byte)
+        sublayer1_workspace = self.sublayer1.get_workspace_size(input_shape, data_per_byte)
         if self.sublayer2 is not None:
-            workspace_size += math.ceil(self.sublayer2.get_output_tensor_shape(input_shape).numel() / data_per_byte)
-        return workspace_size
+            sublayer2_workspace = self.sublayer2.get_workspace_size(input_shape, data_per_byte)
+        else:    
+            sublayer2_workspace = math.ceil(input_shape.numel() / data_per_byte)
+        return sublayer1_workspace + sublayer2_workspace
 
 
     def get_output_tensor_shape(self, input_shape):

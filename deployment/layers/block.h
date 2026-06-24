@@ -14,11 +14,8 @@ private:
 public:
     Block(Layer** layers, uint8_t num_layers);
 
-    float* forward(float* input, float* workspace_start, uint32_t workspace_size);
-    uint32_t get_output_size(void);
-    
-    // uint32_t get_output_size(void);
-
+    void forward(float* workspace_start, uint32_t workspace_size);
+    uint32_t get_output_size(void); 
 };
 
 
@@ -30,10 +27,8 @@ private:
 public:
     Block_SQ(Layer_SQ** layers, uint8_t num_layers);
 
-    int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
-    // uint32_t get_output_size(void);
+    void forward(int8_t* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
-
 };
 
 
