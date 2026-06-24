@@ -68,8 +68,7 @@ class ReLU(Layer, nn.ReLU):
         pass
 
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+        return math.ceil(input_shape.numel() / data_per_byte)
 
     def get_output_tensor_shape(self, input_shape):
         return input_shape
@@ -149,8 +148,7 @@ class ReLU6(Layer, nn.ReLU6):
         pass
 
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+        return math.ceil(input_shape.numel() / data_per_byte)
 
     def get_output_tensor_shape(self, input_shape):
         return input_shape
@@ -232,8 +230,7 @@ class Dropout(Layer, nn.Dropout):
         pass
 
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+        return math.ceil(input_shape.numel() / data_per_byte)
 
     def get_output_tensor_shape(self, input_shape):
         return input_shape

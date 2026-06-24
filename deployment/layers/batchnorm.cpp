@@ -15,31 +15,21 @@ BatchNorm2d::BatchNorm2d(uint16_t input_channel_size, uint16_t input_row_size, u
     this->folded_bias = folded_bias;
 }
 
-float* BatchNorm2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
-
-    // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
-
+void BatchNorm2d::forward(float* workspace_start, uint32_t workspace_size) {
+    // n outermost: each Flash read (folded_weight/bias) is cached once per channel
+    // HWC index used so correct channel weight is applied to each element
     for (uint16_t n = 0; n < this->input_channel_size; n++) {
+        float w = parameter_read_float(this->folded_weight, n);
+        float b = parameter_read_float(this->folded_bias, n);
         for (uint16_t m = 0; m < this->input_row_size; m++) {
             for (uint16_t l = 0; l < this->input_col_size; l++) {
-
-                activation_write_float(output, 
-                        ((n * this->input_row_size * this->input_col_size) + 
-                        (m * this->input_col_size) + 
-                        l),
-                        ((activation_read_float(input,
-                            ((n * this->input_row_size * this->input_col_size) + 
-                            (m * this->input_col_size) + 
-                            l)
-                        ) * parameter_read_float(this->folded_weight, n)) + 
-                        parameter_read_float(this->folded_bias, n))
-                );
+                uint32_t idx = (m * this->input_col_size * this->input_channel_size) +
+                               (l * this->input_channel_size) + n;
+                activation_write_float(workspace_start, idx,
+                    activation_read_float(workspace_start, idx) * w + b);
             }
         }
     }
-    
-    return output;
 }
 
 

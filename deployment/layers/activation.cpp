@@ -28,16 +28,11 @@ ReLU::ReLU(uint32_t input_size) {
  * 
  * Computes: output[i] = max(0, input[i]) for each element
  */
-float* ReLU::forward(float* input, float* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
-
+void ReLU::forward(float* workspace_start, uint32_t workspace_size) {
     // Apply ReLU function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
-        activation_write_float(output, i, relu(activation_read_float(input, i)));
+        activation_write_float(workspace_start, i, relu(activation_read_float(workspace_start, i)));
     }
-
-    return output;
 }
 
 uint32_t ReLU::get_output_size(void) {
@@ -49,16 +44,11 @@ ReLU6::ReLU6(uint32_t input_size) {
     this->input_size = input_size;
 }
 
-float* ReLU6::forward(float* input, float* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
-
+void ReLU6::forward(float* workspace_start, uint32_t workspace_size) {
     // Apply ReLU6 function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
-        activation_write_float(output, i, relu6(activation_read_float(input, i)));
+        activation_write_float(workspace_start, i, relu6(activation_read_float(workspace_start, i)));
     }
-
-    return output;
 }
 
 
@@ -73,10 +63,7 @@ ReLU_SQ::ReLU_SQ(uint32_t input_size, int8_t input_zero_point, uint8_t quantize_
     this->quantize_property = quantize_property;
 }
 
-int8_t* ReLU_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
-    
+void ReLU_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {    
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
     int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
     
@@ -85,12 +72,9 @@ int8_t* ReLU_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t worksp
 
     // Apply quantized ReLU function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
-        // output[i] = relu_zero_point(input[i], this->input_zero_point);
-        activation_write_packed_intb(output, i, relu_zero_point(activation_read_packed_intb(input, i), this->input_zero_point));
+        activation_write_packed_intb(workspace_start, i, relu_zero_point(activation_read_packed_intb(workspace_start, i), this->input_zero_point));
         
     }
-
-    return output;
 }
 
 
@@ -107,10 +91,7 @@ ReLU6_SQ::ReLU6_SQ(uint32_t input_size, int8_t input_zero_point, int8_t input_si
     this->quantize_property = quantize_property;
 }
 
-int8_t* ReLU6_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
-        
+void ReLU6_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {        
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
     int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
     
@@ -119,10 +100,8 @@ int8_t* ReLU6_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t works
 
     // Apply quantized ReLU6 function element-wise
     for (uint32_t i = 0; i < this->input_size; i++) {
-        activation_write_packed_intb(output, i, relu6_zero_point(activation_read_packed_intb(input, i), this->input_zero_point, this->input_six_point));
+        activation_write_packed_intb(workspace_start, i, relu6_zero_point(activation_read_packed_intb(workspace_start, i), this->input_zero_point, this->input_six_point));
     }
-
-    return output;
 }
 
 

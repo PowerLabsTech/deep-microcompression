@@ -78,8 +78,7 @@ class Flatten(Layer, nn.Flatten):
         pass
 
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+        return math.ceil(input_shape.numel() / data_per_byte)
 
     def get_output_tensor_shape(self, input_shape: torch.Size):
         return torch.Size((input_shape.numel(),))
