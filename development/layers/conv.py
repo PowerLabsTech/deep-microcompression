@@ -398,10 +398,14 @@ class Conv2d(Layer, nn.Conv2d):
 
         weight, bias = self.get_compression_parameters()
 
+ 
+        # Reorder from OIHW (PyTorch) to OHWI for HWC activation layout
+        if weight.dim() == 4:
+            weight = weight.permute(0, 2, 3, 1).contiguous()
+
         input_channel_size, input_row_size, input_col_size = input_shape
 
-        output_channel_size, _,\
-        kernel_row_size, kernel_col_size = weight.size()
+        output_channel_size, kernel_row_size, kernel_col_size, _ = weight.size()
         stride_row, stride_col = self.stride
 
         # For dephtwise convolution, so the groups matchs with the input 

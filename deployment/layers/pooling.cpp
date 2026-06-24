@@ -59,10 +59,10 @@ float* MaxPool2d::forward(float* input, float* workspace_start, uint32_t workspa
                 for (uint8_t j = 0; j < this->kernel_size; j++) {
                     for (uint8_t i = 0; i < this->kernel_size; i++) {
                         // Calculate input index
-                        input_val = activation_read_float(input, 
-                            (n * this->input_row_size * this->input_col_size) +
-                            ((m * this->stride + j) * this->input_col_size) +
-                            (l * this->stride + i));
+                        input_val = activation_read_float(input,
+                            ((m * this->stride + j) * this->input_col_size * this->input_channel_size) +
+                            ((l * this->stride + i) * this->input_channel_size) +
+                            n);
                         // Update max value
                         if (input_val > temp) {
                             temp = input_val;
@@ -71,9 +71,10 @@ float* MaxPool2d::forward(float* input, float* workspace_start, uint32_t workspa
                 }
 
                 // Store max value in output
-                activation_write_float(output, 
-                    (n * this->output_row_size * this->output_col_size) +
-                    (m * this->output_col_size) + l,
+                activation_write_float(output,
+                    (m * this->output_col_size * this->input_channel_size) +
+                    (l * this->input_channel_size) +
+                    n,
                     temp
                     );
             }
@@ -123,16 +124,17 @@ float* AvgPool2d::forward(float* input, float* workspace_start, uint32_t workspa
                 for (uint8_t j = 0; j < this->kernel_size; j++) {
                     for (uint8_t i = 0; i < this->kernel_size; i++) {
                         // Calculate input index
-                        total += activation_read_float(input, 
-                            (n * this->input_row_size * this->input_col_size) +
-                            ((m * this->stride + j) * this->input_col_size) +
-                            (l * this->stride + i)
+                        total += activation_read_float(input,
+                            ((m * this->stride + j) * this->input_col_size * this->input_channel_size) +
+                            ((l * this->stride + i) * this->input_channel_size) +
+                            n
                         );
                     }
                 }
                 activation_write_float(output,
-                    (n * this->output_row_size * this->output_col_size) +
-                    (m * this->output_col_size) + l,
+                    (m * this->output_col_size * this->input_channel_size) +
+                    (l * this->input_channel_size) +
+                    n,
                     total / pool_size
                 );
             }
@@ -193,9 +195,9 @@ int8_t* MaxPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
 
                         input_val = activation_read_packed_intb(
                             input,
-                            (n * this->input_row_size * this->input_col_size) +
-                            ((m * this->stride + j) * this->input_col_size) +
-                            (l * this->stride + i)
+                            ((m * this->stride + j) * this->input_col_size * this->input_channel_size) +
+                            ((l * this->stride + i) * this->input_channel_size) +
+                            n
                         );
 
                         // Update max value
@@ -207,9 +209,10 @@ int8_t* MaxPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
 
                 // Store max value in output
                 activation_write_packed_intb(
-                    output, 
-                    (n * this->output_row_size * this->output_col_size) +
-                    (m * this->output_col_size) + l,
+                    output,
+                    (m * this->output_col_size * this->input_channel_size) +
+                    (l * this->input_channel_size) +
+                    n,
                     temp
                 );
             }
@@ -268,19 +271,20 @@ int8_t* AvgPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
                 for (uint8_t j = 0; j < this->kernel_size; j++) {
                     for (uint8_t i = 0; i < this->kernel_size; i++) {
                         total += activation_read_packed_intb(
-                            input, 
-                            (n * this->input_row_size * this->input_col_size) +
-                            ((m * this->stride + j) * this->input_col_size) +
-                            (l * this->stride + i)
+                            input,
+                            ((m * this->stride + j) * this->input_col_size * this->input_channel_size) +
+                            ((l * this->stride + i) * this->input_channel_size) +
+                            n
                         );
                     }
                 }
 
                 // Store average value in output
                 activation_write_packed_intb(
-                    output, 
-                    (n * this->output_row_size * this->output_col_size) +
-                    (m * this->output_col_size) + l,
+                    output,
+                    (m * this->output_col_size * this->input_channel_size) +
+                    (l * this->input_channel_size) +
+                    n,
                     (int8_t)((float)total / pool_size)
                 );
             }

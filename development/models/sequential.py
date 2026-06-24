@@ -1134,6 +1134,7 @@ class Sequential(nn.Sequential):
         param_definition_file = f"#include \"{var_name}.h\"\n\n"
     
         input_shape = torch.Size(input_shape)
+        original_input_shape = input_shape  # saved for test_input HWC permutation
         # Calculate workspace requirements
         max_layer_acitivation_workspace_size = self.get_workspace_size(torch.Size(input_shape))
         # max_output_even_size, max_output_odd_size = self.get_max_workspace_arena(input_shape)
@@ -1195,15 +1196,28 @@ class Sequential(nn.Sequential):
         definition_file += workspace_def
 
         # Generate layer declarations
+        pre_flatten_shape = None  # shape going into the most recent Flatten, for Linear weight reordering
+
         for layer_name, layer in self.names_layers():
 
             layers_def += f"    &{layer_name},\n"
 
-            layer_header, layer_def, layer_param_def = layer.convert_to_c(layer_name, input_shape, for_arduino=for_arduino)
+            # To allow linear layer to format the input from CHW to HWC after flatten
+            if isinstance(layer, Linear):
+                layer_header, layer_def, layer_param_def = layer.convert_to_c(
+                    layer_name, input_shape, for_arduino=for_arduino, conv_shape=pre_flatten_shape
+                )
+                pre_flatten_shape = None
+            else:
+                layer_header, layer_def, layer_param_def = layer.convert_to_c(
+                    layer_name, input_shape, for_arduino=for_arduino
+                )
+                pre_flatten_shape = input_shape if isinstance(layer, Flatten) else None
+
             layers_header += layer_header
 
             param_definition_file += layer_param_def
-            definition_file += layer_def 
+            definition_file += layer_def
 
             input_shape = layer.get_output_tensor_shape(torch.Size(input_shape))  
         
@@ -1219,6 +1233,13 @@ class Sequential(nn.Sequential):
 
 
         if test_input is not None:
+            # Permute test_input from PyTorch CHW/NCHW layout to HWC for deployment
+            if len(original_input_shape) == 3:
+                if test_input.dim() == 4 and test_input.shape[0] == 1:
+                    test_input = test_input.squeeze(0).permute(1, 2, 0).contiguous()
+                elif test_input.dim() == 3:
+                    test_input = test_input.permute(1, 2, 0).contiguous()
+
             if self.is_quantized and self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"] == QuantizationScheme.STATIC:
                 _, test_input_def = convert_tensor_to_bytes_var(
                     self.input_quantize.apply(test_input), 

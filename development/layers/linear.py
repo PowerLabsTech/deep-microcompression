@@ -331,7 +331,7 @@ class Linear(Layer, nn.Linear):
     
 
     @torch.no_grad()
-    def convert_to_c(self, var_name, input_shape, for_arduino=False):
+    def convert_to_c(self, var_name, input_shape, for_arduino=False, conv_shape=None):
         """
         Generates C code for deployment (Stage 3).
 
@@ -339,19 +339,27 @@ class Linear(Layer, nn.Linear):
             var_name: Variable name to use in generated code
             input_shape: Shape of the input tensor
             for_arduino: Flag for Arduino-specific code generation, to add PROGMEM if needed
-        
+            conv_shape: (C, H, W) shape of the conv output before the preceding Flatten.
+                        When provided, weight columns are reordered from CHW-flatten to
+                        HWC-flatten order to match the HWC activation layout.
+
         Produces one of three C constructor variants:
         1.  Float: Standard `float*` pointers (Baseline).
         2.  Dynamic: `int8_t` weights, `float` bias/scales (Reference).
         3.  Static (DMC): Fully integer. `int8_t` weights, `int32_t` bias.
             Includes `zero_point` parameters for hardware-aware unpacking.
-            
+
         Returns:
             (Header String, Definition String, Parameter Blob String)
         """
 
         weight, bias = self.get_compression_parameters()
-        
+
+        # Reorder weight columns from CHW-flatten to HWC-flatten order
+        if conv_shape is not None:
+            C, H, W = conv_shape
+            weight = weight.reshape(weight.shape[0], C, H, W).permute(0, 2, 3, 1).reshape(weight.shape[0], -1)
+
         output_feature_size, input_feature_size = weight.size()
 
         weight_bitwidth = None

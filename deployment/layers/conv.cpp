@@ -75,26 +75,26 @@ float* Conv2d::forward(float* input, float* workspace_start, uint32_t workspace_
                         for (uint8_t j = 0; j < this->kernel_row_size; j++) {
                             for (uint8_t i = 0; i < this->kernel_col_size; i++) {
 
-                                // Standard MAC Operation
+                                // Standard MAC Operation (HWC input, OHWI weight, HWC output)
                                 output_temp += activation_read_float(
-                                    input, 
-                                    (k * this->input_row_size * this->input_col_size) +
-                                    ((j + m * this->stride_row) * this->input_col_size) + 
-                                    (i + l * this->stride_col)
+                                    input,
+                                    ((j + m * this->stride_row) * this->input_col_size * this->input_channel_size) +
+                                    ((i + l * this->stride_col) * this->input_channel_size) +
+                                    k
                                 ) * parameter_read_float(
-                                    this->weight, 
-                                    (n * input_channel_per_group * this->kernel_row_size * this->kernel_col_size) +
-                                    (c_in * this->kernel_row_size * kernel_col_size) + 
-                                    (j * this->kernel_col_size) + 
-                                    i
+                                    this->weight,
+                                    (n * this->kernel_row_size * this->kernel_col_size * input_channel_per_group) +
+                                    (j * this->kernel_col_size * input_channel_per_group) +
+                                    (i * input_channel_per_group) +
+                                    c_in
                                 );
                             }
                         }
                     }
-                    activation_write_float(output, 
-                        (n * this->output_row_size * this->output_col_size) + 
-                        (m * this->output_col_size) + 
-                        l,
+                    activation_write_float(output,
+                        (m * this->output_col_size * this->output_channel_size) +
+                        (l * this->output_channel_size) +
+                        n,
                         output_temp
                     );
                 }
@@ -177,29 +177,30 @@ float* Conv2d_DQ::forward(float* input, float* workspace_start, uint32_t workspa
                         for (uint8_t j = 0; j < this->kernel_row_size; j++) {
                             for (uint8_t i = 0; i < this->kernel_col_size; i++) {
 
-                                // // Convolution operation
+                                // Convolution operation (HWC input, OHWI weight, HWC output)
                                 output_temp += activation_read_float(
-                                    input, 
-                                    (k * this->input_row_size * this->input_col_size) +
-                                    ((j + m * this->stride_row) * this->input_col_size) + 
-                                    (i + l * this->stride_col)
-                                ) * 
+                                    input,
+                                    ((j + m * this->stride_row) * this->input_col_size * this->input_channel_size) +
+                                    ((i + l * this->stride_col) * this->input_channel_size) +
+                                    k
+                                ) *
                                 parameter_read_packed_intb(
-                                    this->weight, 
-                                    (n * input_channel_per_group * this->kernel_row_size * this->kernel_col_size) +
-                                    (c_in * this->kernel_row_size * kernel_col_size) + 
-                                    (j * this->kernel_col_size) + i
+                                    this->weight,
+                                    (n * this->kernel_row_size * this->kernel_col_size * input_channel_per_group) +
+                                    (j * this->kernel_col_size * input_channel_per_group) +
+                                    (i * input_channel_per_group) +
+                                    c_in
                                 );
                             }
                         }
                     }
                     uint8_t scale_index = get_granularity(this->quantize_property) == PER_CHANNEL ? n : 0;
 
-                    activation_write_float(output, 
-                        (n * this->output_row_size * this->output_col_size) + 
-                        (m * this->output_col_size) + 
-                        l,
-                        (this->bias ? 
+                    activation_write_float(output,
+                        (m * this->output_col_size * this->output_channel_size) +
+                        (l * this->output_channel_size) +
+                        n,
+                        (this->bias ?
                         (output_temp * parameter_read_float(this->weight_scale, scale_index) + parameter_read_float(this->bias, n)) :
                         (output_temp * parameter_read_float(this->weight_scale, scale_index)))
                     );
@@ -289,18 +290,18 @@ int8_t* Conv2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t work
                         k = g * input_channel_per_group + c_in;
                         for (uint8_t j = 0; j < this->kernel_row_size; j++) {
                             for (uint8_t i = 0; i < this->kernel_col_size; i++) {
-                                // Convolution operation
-
+                                // Convolution operation (HWC input, OHWI weight, HWC output)
                                 output_temp += ((int32_t)activation_read_packed_intb(
                                     input,
-                                    (k * this->input_row_size * this->input_col_size) +
-                                    ((j + m * this->stride_row) * this->input_col_size) + 
-                                    (i + l * this->stride_col)) - this->input_zero_point) *
+                                    ((j + m * this->stride_row) * this->input_col_size * this->input_channel_size) +
+                                    ((i + l * this->stride_col) * this->input_channel_size) +
+                                    k) - this->input_zero_point) *
                                     parameter_read_packed_intb(
                                         this->weight,
-                                        (n * input_channel_per_group * this->kernel_row_size * this->kernel_col_size) +
-                                        (c_in * this->kernel_row_size * kernel_col_size) + 
-                                        (j * this->kernel_col_size) + i
+                                        (n * this->kernel_row_size * this->kernel_col_size * input_channel_per_group) +
+                                        (j * this->kernel_col_size * input_channel_per_group) +
+                                        (i * input_channel_per_group) +
+                                        c_in
                                     );
                             }
                         }
@@ -311,12 +312,12 @@ int8_t* Conv2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t work
                     output_temp = roundf(output_temp * parameter_read_float(this->bias_scale, scale_index) / this->output_scale);
                     output_temp += this->output_zero_point;
                     output_temp = clamp_intb(output_temp);
-                    
+
                     activation_write_packed_intb(
                         output,
-                        (n * this->output_row_size * this->output_col_size) + 
-                        (m * this->output_col_size) + 
-                        l, 
+                        (m * this->output_col_size * this->output_channel_size) +
+                        (l * this->output_channel_size) +
+                        n,
                         output_temp
                     );
                 }
