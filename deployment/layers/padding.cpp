@@ -11,37 +11,35 @@ ConstantPad2d::ConstantPad2d(uint16_t input_channel_size, uint16_t input_row_siz
     this->padding = padding;                      
 }
 
-float* ConstantPad2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
-
+void ConstantPad2d::forward(float* workspace_start, uint32_t workspace_size) {
     uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
     uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
 
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
-
     if (this->padding.is_padded()) {
-        for (int32_t n = this->input_channel_size-1; n > -1; n--) {
-            for (int32_t m = padded_row_size-1; m > -1; m--) {
-                for (int32_t l = padded_col_size-1; l > -1; l--) {
+        // Loop order m→l→n (outermost→innermost) backwards for correct HWC in-place traversal
+        for (int32_t m = padded_row_size-1; m > -1; m--) {
+            for (int32_t l = padded_col_size-1; l > -1; l--) {
+                for (int32_t n = this->input_channel_size-1; n > -1; n--) {
 
-                    if (m < this->padding.padding_top || m >= padded_row_size - this->padding.padding_bottom || 
+                    if (m < this->padding.padding_top || m >= padded_row_size - this->padding.padding_bottom ||
                         l < this->padding.padding_left || l >= padded_col_size - this->padding.padding_right){
-                        
-                            activation_write_float(output, 
-                                ((n * padded_row_size * padded_col_size) + 
-                                (m * padded_col_size) + 
-                                l),
+
+                            activation_write_float(workspace_start,
+                                (m * padded_col_size * this->input_channel_size) +
+                                (l * this->input_channel_size) +
+                                n,
                                 this->value
                             );
                         }
                     else {
-                        activation_write_float(output, 
-                            ((n * padded_row_size * padded_col_size) + 
-                            (m * padded_col_size) + 
-                            l),
-                            activation_read_float(input, 
-                                ((n * this->input_row_size * this->input_col_size) + 
-                                ((m-this->padding.padding_top) * this->input_col_size) + 
-                                (l-this->padding.padding_left))
+                        activation_write_float(workspace_start,
+                            (m * padded_col_size * this->input_channel_size) +
+                            (l * this->input_channel_size) +
+                            n,
+                            activation_read_float(workspace_start,
+                                ((m - this->padding.padding_top) * this->input_col_size * this->input_channel_size) +
+                                ((l - this->padding.padding_left) * this->input_channel_size) +
+                                n
                             )
                         );
                     }
@@ -50,7 +48,6 @@ float* ConstantPad2d::forward(float* input, float* workspace_start, uint32_t wor
         }
 
     }
-    return output;
 }
 
 
@@ -75,14 +72,9 @@ ConstantPad2d_SQ::ConstantPad2d_SQ(uint16_t input_channel_size, uint16_t input_r
 }
 
 
-int8_t* ConstantPad2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
-
+void ConstantPad2d_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
     uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
     uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
-
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil(
-        (float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)
-    ) : workspace_start;
 
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
     int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
@@ -91,29 +83,30 @@ int8_t* ConstantPad2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32
     get_activation_read_packed_intb(this->quantize_property, &activation_read_packed_intb);
 
     if (this->padding.is_padded()) {
-        for (int32_t n = this->input_channel_size-1; n > -1; n--) {
-            for (int32_t m = padded_row_size-1; m > -1; m--) {
-                for (int32_t l = padded_col_size-1; l > -1; l--) {
+        // Loop order m→l→n (outermost→innermost) backwards for correct HWC in-place traversal
+        for (int32_t m = padded_row_size-1; m > -1; m--) {
+            for (int32_t l = padded_col_size-1; l > -1; l--) {
+                for (int32_t n = this->input_channel_size-1; n > -1; n--) {
 
-                    if (m < this->padding.padding_top || m >= padded_row_size - this->padding.padding_bottom || 
+                    if (m < this->padding.padding_top || m >= padded_row_size - this->padding.padding_bottom ||
                         l < this->padding.padding_left || l >= padded_col_size - this->padding.padding_right){
-                        
-                            activation_write_packed_intb(output, 
-                                ((n * padded_row_size * padded_col_size) + 
-                                (m * padded_col_size) + 
-                                l),
+
+                            activation_write_packed_intb(workspace_start,
+                                (m * padded_col_size * this->input_channel_size) +
+                                (l * this->input_channel_size) +
+                                n,
                                 this->input_value_point
                             );
                         }
                     else {
-                            activation_write_packed_intb(output,
-                                ((n * padded_row_size * padded_col_size) + 
-                                (m * padded_col_size) + 
-                                l),
-                                activation_read_packed_intb(input,
-                                    ((n * this->input_row_size * this->input_col_size) + 
-                                    ((m-this->padding.padding_top) * this->input_col_size) + 
-                                    (l-this->padding.padding_left))
+                            activation_write_packed_intb(workspace_start,
+                                (m * padded_col_size * this->input_channel_size) +
+                                (l * this->input_channel_size) +
+                                n,
+                                activation_read_packed_intb(workspace_start,
+                                    ((m - this->padding.padding_top) * this->input_col_size * this->input_channel_size) +
+                                    ((l - this->padding.padding_left) * this->input_channel_size) +
+                                    n
                                 )
                             );
                     }
@@ -121,7 +114,6 @@ int8_t* ConstantPad2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32
             }
         }
     }
-    return output;
 }
 
 uint32_t ConstantPad2d_SQ::get_output_size(void) {

@@ -71,8 +71,7 @@ class ConstantPad2d(Layer, nn.ConstantPad2d):
         pass
 
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+        return math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte)
 
     def get_output_tensor_shape(self, input_shape):
         # padding order: (left, right, top, bottom)
