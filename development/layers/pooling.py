@@ -99,8 +99,7 @@ class MaxPool2d(Layer, nn.MaxPool2d):
         pass
 
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+        return math.ceil(input_shape.numel() / data_per_byte)
 
     def get_output_tensor_shape(self, input_shape):
         return _pool_output_shape(input_shape, self.kernel_size, self.stride, self.padding)
@@ -132,8 +131,7 @@ class AvgPool2d(Layer, nn.AvgPool2d):
         pass
 
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+        return math.ceil(input_shape.numel() / data_per_byte)
 
     def get_output_tensor_shape(self, input_shape):
         return _pool_output_shape(input_shape, self.kernel_size, self.stride, self.padding)

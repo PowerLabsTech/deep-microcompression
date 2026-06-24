@@ -41,10 +41,7 @@ MaxPool2d::MaxPool2d(uint16_t input_channel_size, uint16_t input_row_size,
  * Performs 2D max pooling operation with the specified kernel size and stride.
  * The input is assumed to be in CHW (channels, height, width) format.
  */
-float* MaxPool2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
-
+void MaxPool2d::forward(float* workspace_start, uint32_t workspace_size) {
     float temp, input_val;
 
     // Loop over all channels
@@ -59,7 +56,7 @@ float* MaxPool2d::forward(float* input, float* workspace_start, uint32_t workspa
                 for (uint8_t j = 0; j < this->kernel_size; j++) {
                     for (uint8_t i = 0; i < this->kernel_size; i++) {
                         // Calculate input index
-                        input_val = activation_read_float(input,
+                        input_val = activation_read_float(workspace_start,
                             ((m * this->stride + j) * this->input_col_size * this->input_channel_size) +
                             ((l * this->stride + i) * this->input_channel_size) +
                             n);
@@ -71,7 +68,7 @@ float* MaxPool2d::forward(float* input, float* workspace_start, uint32_t workspa
                 }
 
                 // Store max value in output
-                activation_write_float(output,
+                activation_write_float(workspace_start,
                     (m * this->output_col_size * this->input_channel_size) +
                     (l * this->input_channel_size) +
                     n,
@@ -80,8 +77,6 @@ float* MaxPool2d::forward(float* input, float* workspace_start, uint32_t workspa
             }
         }
     }
-    
-    return output;
 }
 
 uint32_t MaxPool2d::get_output_size(void) {
@@ -104,10 +99,7 @@ AvgPool2d::AvgPool2d(uint16_t input_channel_size, uint16_t input_row_size,
     this->output_col_size = ((this->input_col_size - this->kernel_size) / this->stride) + 1;
 }
 
-float* AvgPool2d::forward(float* input, float* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
-
+void AvgPool2d::forward(float* workspace_start, uint32_t workspace_size) {
     float total;
     uint8_t pool_size = this->kernel_size * this->kernel_size;
 
@@ -124,14 +116,14 @@ float* AvgPool2d::forward(float* input, float* workspace_start, uint32_t workspa
                 for (uint8_t j = 0; j < this->kernel_size; j++) {
                     for (uint8_t i = 0; i < this->kernel_size; i++) {
                         // Calculate input index
-                        total += activation_read_float(input,
+                        total += activation_read_float(workspace_start,
                             ((m * this->stride + j) * this->input_col_size * this->input_channel_size) +
                             ((l * this->stride + i) * this->input_channel_size) +
                             n
                         );
                     }
                 }
-                activation_write_float(output,
+                activation_write_float(workspace_start,
                     (m * this->output_col_size * this->input_channel_size) +
                     (l * this->input_channel_size) +
                     n,
@@ -140,8 +132,6 @@ float* AvgPool2d::forward(float* input, float* workspace_start, uint32_t workspa
             }
         }
     }
-
-    return output;
 }
 
 
@@ -168,10 +158,7 @@ MaxPool2d_SQ::MaxPool2d_SQ(uint16_t input_channel_size, uint16_t input_row_size,
     this->quantize_property = quantize_property;
 }
 
-int8_t* MaxPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
-
+void MaxPool2d_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
     int8_t temp, input_val;
     
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
@@ -194,7 +181,7 @@ int8_t* MaxPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
                         // Calculate input index
 
                         input_val = activation_read_packed_intb(
-                            input,
+                            workspace_start,
                             ((m * this->stride + j) * this->input_col_size * this->input_channel_size) +
                             ((l * this->stride + i) * this->input_channel_size) +
                             n
@@ -209,7 +196,7 @@ int8_t* MaxPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
 
                 // Store max value in output
                 activation_write_packed_intb(
-                    output,
+                    workspace_start,
                     (m * this->output_col_size * this->input_channel_size) +
                     (l * this->input_channel_size) +
                     n,
@@ -218,8 +205,6 @@ int8_t* MaxPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
             }
         }
     }
-
-    return output;
 }
 
 uint32_t MaxPool2d_SQ::get_output_size(void) {
@@ -245,10 +230,7 @@ AvgPool2d_SQ::AvgPool2d_SQ(uint16_t input_channel_size, uint16_t input_row_size,
     this->quantize_property = quantize_property;
 }
 
-int8_t* AvgPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
-
+void AvgPool2d_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
     int16_t total;
 
     uint8_t pool_size = this->kernel_size * this->kernel_size;
@@ -271,7 +253,7 @@ int8_t* AvgPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
                 for (uint8_t j = 0; j < this->kernel_size; j++) {
                     for (uint8_t i = 0; i < this->kernel_size; i++) {
                         total += activation_read_packed_intb(
-                            input,
+                            workspace_start,
                             ((m * this->stride + j) * this->input_col_size * this->input_channel_size) +
                             ((l * this->stride + i) * this->input_channel_size) +
                             n
@@ -281,7 +263,7 @@ int8_t* AvgPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
 
                 // Store average value in output
                 activation_write_packed_intb(
-                    output,
+                    workspace_start,
                     (m * this->output_col_size * this->input_channel_size) +
                     (l * this->input_channel_size) +
                     n,
@@ -290,8 +272,6 @@ int8_t* AvgPool2d_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t w
             }
         }
     }
-
-    return output;
 }
 
 uint32_t AvgPool2d_SQ::get_output_size(void) {
