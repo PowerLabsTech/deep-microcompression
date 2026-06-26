@@ -43,6 +43,8 @@ protected:
     uint8_t kernel_col_size;     ///< Width of convolution kernel
 
     // Operation parameters
+    uint8_t padding_row;         ///< Vertical stride
+    uint8_t padding_col;         ///< Horizontal stride
     uint8_t stride_row;         ///< Vertical stride
     uint8_t stride_col;         ///< Horizontal stride
     uint8_t groups;
@@ -52,30 +54,12 @@ protected:
     const float* bias;           ///< Pointer to bias tensor
 
 public:
-    /**
-     * @brief Constructor for floating-point Conv2d
-     * @param input_channel_size Number of input channels
-     * @param input_row_size Input height in pixels
-     * @param input_col_size Input width in pixels
-     * @param output_channel_size Number of output channels
-     * @param kernel_row_size Kernel height
-     * @param kernel_col_size Kernel width
-     * @param stride_row Vertical stride
-     * @param stride_col Horizontal stride
-     * @param weight Pointer to weight tensor
-     * @param bias Pointer to bias tensor
-     */
     Conv2d(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
            uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
-           uint8_t stride_row, uint8_t stride_col, uint8_t groups,
-           const float* weight, const float* bias);
-    
-    /**
-     * @brief Forward pass for floating-point Conv2d
-     * @param input Input tensor (float)
-     * @param output Output tensor (float)
-     */
-    float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+           uint8_t stride_row, uint8_t stride_col, uint8_t padding_row, uint8_t padding_col,
+           uint8_t groups, const float* weight, const float* bias);
+
+    void forward(float* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
 };
 
@@ -102,6 +86,8 @@ protected:
     uint8_t kernel_col_size;     ///< Width of convolution kernel
 
     // Operation parameters
+    uint8_t padding_row;
+    uint8_t padding_col;
     uint8_t stride_row;         ///< Vertical stride
     uint8_t stride_col;         ///< Horizontal stride
     uint8_t groups;
@@ -109,27 +95,18 @@ protected:
     // Quantization parameters
     const int8_t* weight;       ///< Pointer to quantized weight tensor
     const float* bias;          ///< Pointer to bias tensor (float)
-    const float* weight_scale;         ///< Scale factor for weights
+    const float* weight_scale;  ///< Scale factor for weights
 
     uint8_t quantize_property;
 
 public:
-    /**
-     * @brief Constructor for dynamically quantized Conv2d
-     * @param weight_scale Scale factor for quantized weights
-     * @param other parameters same as floating-point version
-     */
     Conv2d_DQ(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
            uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
-           uint8_t stride_row, uint8_t stride_col, uint8_t groups,
-           const int8_t* weight, const float* bias, const float* weight_scale, uint8_t quantize_property);
+           uint8_t stride_row, uint8_t stride_col, uint8_t padding_row, uint8_t padding_col,
+           uint8_t groups, const int8_t* weight, const float* bias,
+           const float* weight_scale, uint8_t quantize_property);
 
-    /**
-     * @brief Forward pass for dynamically quantized Conv2d
-     * @param input Input tensor (float)
-     * @param output Output tensor (float)
-     */
-    float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+    void forward(float* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
 };
 
@@ -151,6 +128,8 @@ protected:
     uint8_t kernel_col_size;     ///< Width of convolution kernel
 
     // Operation parameters
+    uint8_t padding_row;
+    uint8_t padding_col;
     uint8_t stride_row;         ///< Vertical stride
     uint8_t stride_col;         ///< Horizontal stride
     uint8_t groups;
@@ -169,11 +148,11 @@ protected:
 public:
     Conv2d_SQ(uint16_t input_channel_size, uint16_t input_row_size, uint16_t input_col_size,
            uint16_t output_channel_size, uint8_t kernel_row_size, uint8_t kernel_col_size,
-           uint8_t stride_row, uint8_t stride_col, uint8_t groups,
-           const int8_t* weight, const int32_t* bias, float output_scale, 
-           int8_t output_zero_point, int8_t input_zero_point,  float* bias_scale, uint8_t quantize_property);
+           uint8_t stride_row, uint8_t stride_col, uint8_t padding_row, uint8_t padding_col,
+           uint8_t groups, const int8_t* weight, const int32_t* bias, float output_scale,
+           int8_t output_zero_point, int8_t input_zero_point, float* bias_scale, uint8_t quantize_property);
 
-    int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
+    void forward(int8_t* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
 };
 

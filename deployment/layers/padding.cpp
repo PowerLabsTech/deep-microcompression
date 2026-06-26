@@ -11,42 +11,49 @@ ConstantPad2d::ConstantPad2d(uint16_t input_channel_size, uint16_t input_row_siz
     this->padding = padding;                      
 }
 
-void ConstantPad2d::forward(float* workspace_start, uint32_t workspace_size) {
-    uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
-    uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
+void constantPad2d(float* input, float* output,
+                   uint16_t channel_size, uint16_t row_size, uint16_t col_size,
+                   Padding_t padding, float value) {
 
-    if (this->padding.is_padded()) {
-        // Loop order m→l→n (outermost→innermost) backwards for correct HWC in-place traversal
-        for (int32_t m = padded_row_size-1; m > -1; m--) {
-            for (int32_t l = padded_col_size-1; l > -1; l--) {
-                for (int32_t n = this->input_channel_size-1; n > -1; n--) {
+    uint16_t padded_row_size = row_size + padding.padding_top + padding.padding_bottom;
+    uint16_t padded_col_size = col_size + padding.padding_left + padding.padding_right;
 
-                    if (m < this->padding.padding_top || m >= padded_row_size - this->padding.padding_bottom ||
-                        l < this->padding.padding_left || l >= padded_col_size - this->padding.padding_right){
+    // Loop order m→l→n backwards: writes to higher addresses first, safe for in-place expansion
+    for (int32_t m = padded_row_size-1; m > -1; m--) {
+        for (int32_t l = padded_col_size-1; l > -1; l--) {
+            for (int32_t n = channel_size-1; n > -1; n--) {
 
-                            activation_write_float(workspace_start,
-                                (m * padded_col_size * this->input_channel_size) +
-                                (l * this->input_channel_size) +
-                                n,
-                                this->value
-                            );
-                        }
-                    else {
-                        activation_write_float(workspace_start,
-                            (m * padded_col_size * this->input_channel_size) +
-                            (l * this->input_channel_size) +
-                            n,
-                            activation_read_float(workspace_start,
-                                ((m - this->padding.padding_top) * this->input_col_size * this->input_channel_size) +
-                                ((l - this->padding.padding_left) * this->input_channel_size) +
-                                n
-                            )
-                        );
-                    }
+                if (m < padding.padding_top || m >= padded_row_size - padding.padding_bottom ||
+                    l < padding.padding_left || l >= padded_col_size - padding.padding_right) {
+
+                    activation_write_float(output,
+                        (m * padded_col_size * channel_size) +
+                        (l * channel_size) +
+                        n,
+                        value
+                    );
+                } else {
+                    activation_write_float(output,
+                        (m * padded_col_size * channel_size) +
+                        (l * channel_size) +
+                        n,
+                        activation_read_float(input,
+                            ((m - padding.padding_top) * col_size * channel_size) +
+                            ((l - padding.padding_left) * channel_size) +
+                            n
+                        )
+                    );
                 }
             }
         }
+    }
+}
 
+void ConstantPad2d::forward(float* workspace_start, uint32_t workspace_size) {
+    if (this->padding.is_padded()) {
+        constantPad2d(workspace_start, workspace_start,
+                      this->input_channel_size, this->input_row_size, this->input_col_size,
+                      this->padding, this->value);
     }
 }
 
@@ -72,47 +79,50 @@ ConstantPad2d_SQ::ConstantPad2d_SQ(uint16_t input_channel_size, uint16_t input_r
 }
 
 
-void ConstantPad2d_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
-    uint16_t padded_row_size = this->input_row_size + this->padding.padding_top + this->padding.padding_bottom;
-    uint16_t padded_col_size = this->input_col_size + this->padding.padding_left + this->padding.padding_right;
+void constantPad2d_SQ(int8_t* input, int8_t* output,
+                      uint16_t channel_size, uint16_t row_size, uint16_t col_size,
+                      Padding_t padding, int8_t value, uint8_t quantize_property) {
+
+    uint16_t padded_row_size = row_size + padding.padding_top + padding.padding_bottom;
+    uint16_t padded_col_size = col_size + padding.padding_left + padding.padding_right;
 
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
     int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
-        
-    get_activation_write_packed_intb(this->quantize_property, &activation_write_packed_intb);
-    get_activation_read_packed_intb(this->quantize_property, &activation_read_packed_intb);
 
-    if (this->padding.is_padded()) {
-        // Loop order m→l→n (outermost→innermost) backwards for correct HWC in-place traversal
-        for (int32_t m = padded_row_size-1; m > -1; m--) {
-            for (int32_t l = padded_col_size-1; l > -1; l--) {
-                for (int32_t n = this->input_channel_size-1; n > -1; n--) {
+    get_activation_write_packed_intb(quantize_property, &activation_write_packed_intb);
+    get_activation_read_packed_intb(quantize_property, &activation_read_packed_intb);
 
-                    if (m < this->padding.padding_top || m >= padded_row_size - this->padding.padding_bottom ||
-                        l < this->padding.padding_left || l >= padded_col_size - this->padding.padding_right){
+    // Loop order m→l→n backwards: writes to higher addresses first, safe for in-place expansion
+    for (int32_t m = padded_row_size-1; m > -1; m--) {
+        for (int32_t l = padded_col_size-1; l > -1; l--) {
+            for (int32_t n = channel_size-1; n > -1; n--) {
 
-                            activation_write_packed_intb(workspace_start,
-                                (m * padded_col_size * this->input_channel_size) +
-                                (l * this->input_channel_size) +
-                                n,
-                                this->input_value_point
-                            );
-                        }
-                    else {
-                            activation_write_packed_intb(workspace_start,
-                                (m * padded_col_size * this->input_channel_size) +
-                                (l * this->input_channel_size) +
-                                n,
-                                activation_read_packed_intb(workspace_start,
-                                    ((m - this->padding.padding_top) * this->input_col_size * this->input_channel_size) +
-                                    ((l - this->padding.padding_left) * this->input_channel_size) +
-                                    n
-                                )
-                            );
-                    }
+                if (m < padding.padding_top || m >= padded_row_size - padding.padding_bottom ||
+                    l < padding.padding_left || l >= padded_col_size - padding.padding_right) {
+
+                    activation_write_packed_intb(output,
+                        (m * padded_col_size * channel_size) + (l * channel_size) + n,
+                        value
+                    );
+                } else {
+                    activation_write_packed_intb(output,
+                        (m * padded_col_size * channel_size) + (l * channel_size) + n,
+                        activation_read_packed_intb(input,
+                            ((m - padding.padding_top) * col_size * channel_size) +
+                            ((l - padding.padding_left) * channel_size) + n
+                        )
+                    );
                 }
             }
         }
+    }
+}
+
+void ConstantPad2d_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
+    if (this->padding.is_padded()) {
+        constantPad2d_SQ(workspace_start, workspace_start,
+                         this->input_channel_size, this->input_row_size, this->input_col_size,
+                         this->padding, this->input_value_point, this->quantize_property);
     }
 }
 

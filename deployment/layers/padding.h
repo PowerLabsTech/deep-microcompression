@@ -19,14 +19,13 @@ struct Padding_t {
 
 
 
-// void pad_input(float* input, Padding_t padding, 
-//                 const uint16_t input_channel_size, const uint16_t input_row_size, const uint16_t input_col_size, 
-//                 const uint16_t padded_row_size, const uint16_t padded_col_size);
+void constantPad2d(float* input, float* output,
+                   uint16_t channel_size, uint16_t row_size, uint16_t col_size,
+                   Padding_t padding, float value);
 
-
-// void pad_input(int8_t* input, int8_t zero_point, Padding_t padding, 
-//                 const uint16_t input_channel_size, const uint16_t input_row_size, const uint16_t input_col_size, 
-//                 const uint16_t padded_row_size, const uint16_t padded_col_size, uint8_t quantize_property);
+void constantPad2d_SQ(int8_t* input, int8_t* output,
+                      uint16_t channel_size, uint16_t row_size, uint16_t col_size,
+                      Padding_t padding, int8_t value, uint8_t quantize_property);
 
 
 class ConstantPad2d : public Layer {

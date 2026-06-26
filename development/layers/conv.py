@@ -354,14 +354,56 @@ class Conv2d(Layer, nn.Conv2d):
         return weight, bias
     
 
+    def get_workspace_debt(self, input_shape):
+        if self.in_channels >= self.out_channels:
+            return 0
+
+        C_in, H_p, W_p = self.get_padded_input_tensor_shape(input_shape)
+        C_out, H_out, W_out = self.get_output_tensor_shape(input_shape)
+
+        assert C_in == self.in_channels, (
+            "The channel of the input shape does not match in_channels, "
+            f"expected {self.in_channels} but got {C_in}"
+        )
+        def _pair(x): return x if isinstance(x, tuple) else (x, x)
+        sH, sW = _pair(self.stride)
+
+        # Paper Theorem 3: D(y,x) = - x*α - y*β
+        alpha = C_in * sW - C_out
+        beta  = W_p * sH * C_in - C_out * W_out
+        D = lambda y, x: - x * alpha - y * beta
+
+        max_D = 0
+        for (y, x) in [(0, 0), (0, W_out-1), (H_out-1, 0), (H_out-1, W_out-1)]:
+            max_D = max(max_D, D(y, x))
+        return max_D
+
+
     def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)\
-            + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte)
+        output_channel_per_group = self.out_channels // self.groups
+        workspace_size = math.ceil(
+            self.get_padded_input_tensor_shape(input_shape).numel() / data_per_byte
+        )
+        workspace_size += math.ceil(self.get_workspace_debt(input_shape) / data_per_byte)
+        workspace_size += math.ceil(output_channel_per_group / data_per_byte)
+        return workspace_size
+
+
+    def get_padded_input_tensor_shape(self, input_shape) -> torch.Size:
+        """Calculates input shape after padding"""
+        C_in, H_in, W_in = input_shape
+        def _pair(x): return x if isinstance(x, tuple) else (x, x)
+        pH, pW = _pair(self.padding)
+        H_out = H_in + 2 * pH
+        W_out = W_in + 2 * pW
+        
+        return torch.Size((C_in, H_out, W_out))
+    
 
 
     def get_output_tensor_shape(self, input_shape) -> torch.Size:
         """Calculates output shape for memory planning."""
-        C_in, H_in, W_in = input_shape
+        C_in, H_in, W_in = self.get_padded_input_tensor_shape(input_shape)
         
         # Unpack parameters (handle both int and tuple)
         def _pair(x): return x if isinstance(x, tuple) else (x, x)
@@ -371,13 +413,12 @@ class Conv2d(Layer, nn.Conv2d):
             
         sH, sW = _pair(self.stride)
         dH, dW = _pair(self.dilation)
-        pH, pW = _pair(self.padding)
         
-        H_out = ((H_in + 2 * pH - dH * (kH - 1) - 1) // sH) + 1
-        W_out = ((W_in + 2 * pW - dW * (kW - 1) - 1) // sW) + 1
+        H_out = ((H_in - dH * (kH - 1) - 1) // sH) + 1
+        W_out = ((W_in - dW * (kW - 1) - 1) // sW) + 1
         
         return torch.Size((C_out, H_out, W_out))
-    
+
 
     @torch.no_grad()
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
@@ -493,14 +534,16 @@ class Conv2d(Layer, nn.Conv2d):
                     f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
                     f"{input_row_size}, {input_col_size}, {output_channel_size}, "
                     f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, (float*){var_name}_bias,  (float*){var_name}_weight_scale, {quantize_property});\n"
+                    f"(int8_t*){var_name}_weight, (float*){var_name}_bias,  (float*){var_name}_weight_scale, "
+                    f"{quantize_property});\n"
                 )
             else:     
                 layer_def = (
                     f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
                     f"{input_row_size}, {input_col_size}, {output_channel_size}, "
                     f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, nullptr,  (float*){var_name}_weight_scale, {quantize_property});\n"
+                    f"(int8_t*){var_name}_weight, nullptr,  (float*){var_name}_weight_scale, "
+                    f"{quantize_property});\n"
                 )
             layer_header += f"extern {self.__class__.__name__}_DQ {var_name};\n\n"
                 
@@ -558,7 +601,8 @@ class Conv2d(Layer, nn.Conv2d):
                     f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
                     f"(int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
                     f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
+                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, "
+                    f"{quantize_property});\n"
                 )
             else:
                 layer_def = (
@@ -567,7 +611,8 @@ class Conv2d(Layer, nn.Conv2d):
                     f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
                     f"(int8_t*){var_name}_weight, nullptr, "
                     f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
+                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, "
+                    f"{quantize_property});\n"
                 )
             layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
 

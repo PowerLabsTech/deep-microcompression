@@ -39,7 +39,7 @@ public:
      * @param input Pointer to input tensor (float)
      * @param output Pointer to output tensor (float)
      */
-    float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+    void forward(float* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
 };
 
@@ -76,7 +76,7 @@ public:
      * @param input Pointer to input tensor (float)
      * @param output Pointer to output tensor (float)
      */
-    float* forward(float* input, float* workspace_start, uint32_t workspace_size);
+    void forward(float* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
 };
 
@@ -97,7 +97,7 @@ public:
     Linear_SQ(uint16_t output_size, uint16_t input_size, const int8_t* weight, const int32_t* bias,
           float output_scale, int8_t output_zero_point, int8_t input_zero_point,  float* bias_scale, uint8_t quantize_property);
 
-    int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
+    void forward(int8_t* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
 };
 
