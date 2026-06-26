@@ -75,14 +75,11 @@ void Branch_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
 
     for(uint32_t i=0; i < this->get_output_size(); i++) {
         activation_write_packed_intb(
-            workspace_start, i, (int8_t)clamp_intb(roundf(
-                (
-                    (s1_so * (float)activation_read_packed_intb(workspace_start, i)) +
-                    (s2_so * (float)activation_read_packed_intb(sublayer2_workspace_start, i))
-                )) +
-                (int16_t)zo
-            )
-        );
+            workspace_start, i, (int8_t)clamp_intb((int16_t)roundf(
+                (s1_so * (float)activation_read_packed_intb(workspace_start, i)) +
+                (s2_so * (float)activation_read_packed_intb(sublayer2_workspace_start, i))
+            ) + (int16_t)zo
+        ));
     }
 }
 

@@ -30,6 +30,10 @@ void Flatten::forward(float* workspace_start, uint32_t workspace_size) {
     // No-op: flatten is a shape-only operation, data stays in place
 }
 
+uint32_t Flatten::get_output_size(void) {
+    return this->input_size;
+}
+
 
 
 Flatten_SQ::Flatten_SQ(uint32_t input_size, uint8_t quantize_property) {

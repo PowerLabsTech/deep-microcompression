@@ -25,12 +25,9 @@
 class Layer {
 public:
     /**
-     * @brief Forward pass interface for floating-point layers
-     * @param input Pointer to input tensor for the layer(float)
-     * @param workspace_start Pointer to workspace start start (float)
-     * @param workspace_size size of the pre-allocated workspace
-     * 
-     * @note Pure virtual function - must be implemented by derived classes
+     * @brief In-place forward pass for floating-point layers.
+     * @param workspace_start Shared workspace buffer; input on entry, output on exit.
+     * @param workspace_size  Number of float elements in workspace_start.
      */
     virtual void forward(float* workspace_start, uint32_t workspace_size) = 0;
     virtual uint32_t get_output_size(void) = 0;
@@ -40,12 +37,9 @@ public:
 class Layer_SQ {
 public:
     /**
-     * @brief Forward pass interface for floating-point layers
-     * @param input Pointer to input tensor for the layer(int8_t)
-     * @param workspace_start Pointer to workspace start start (int8_t)
-     * @param workspace_size size of the pre-allocated workspace
-     * 
-     * @note Pure virtual function - must be implemented by derived classes
+     * @brief In-place forward pass for statically-quantized layers.
+     * @param workspace_start Shared workspace buffer (int8_t*); input on entry, output on exit.
+     * @param workspace_size  Size of workspace_start in bytes.
      */
     uint8_t quantize_property;
     virtual void forward(int8_t* workspace_start, uint32_t workspace_size) = 0;

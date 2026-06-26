@@ -109,7 +109,6 @@ void AvgPool2d::forward(float* workspace_start, uint32_t workspace_size) {
         // Loop over output spatial dimensions
         for (uint16_t m = 0; m < this->output_row_size; m++) {
             for (uint16_t l = 0; l < this->output_col_size; l++) {
-                // Initialize max value to smallest possible float
                 total = 0;
 
                 // Iterate through pooling window

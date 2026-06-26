@@ -187,6 +187,6 @@ void Linear_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
     }
 }
 
-uint32_t ::Linear_SQ::get_output_size(void) {
+uint32_t Linear_SQ::get_output_size(void) {
     return this->output_size;
 }

@@ -15,10 +15,6 @@
 #include <stdint.h>
 #include "layers/layer.h"
 
-// Buffer switching constants for double-buffering strategy
-#define DLAI_EVEN 0  ///< Identifier for even-numbered layers
-#define DLAI_ODD  1  ///< Identifier for odd-numbered layers
-
 #define NONE 0
 #define DYNAMIC 1
 #define STATIC 2
