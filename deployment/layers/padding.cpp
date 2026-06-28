@@ -1,16 +1,6 @@
 #include "padding.h"
 
 
-ConstantPad2d::ConstantPad2d(uint16_t input_channel_size, uint16_t input_row_size, 
-                    uint16_t input_col_size, float value, Padding_t padding) {
-    this->input_channel_size = input_channel_size;
-    this->input_row_size = input_row_size;
-    this->input_col_size = input_col_size;
-
-    this->value = value;
-    this->padding = padding;                      
-}
-
 void constantPad2d(float* input, float* output,
                    uint16_t channel_size, uint16_t row_size, uint16_t col_size,
                    Padding_t padding, float value) {
@@ -50,33 +40,40 @@ void constantPad2d(float* input, float* output,
 }
 
 void ConstantPad2d::forward(float* workspace_start, uint32_t workspace_size) {
-    if (this->padding.is_padded()) {
+    const uint8_t* p = this->buffer;
+    uint16_t input_channel_size = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_row_size     = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_col_size     = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    p += 2;  // alignment pad to reach float at offset 8
+    float value                 = dmc_pgm_read_float((const float*)p);   p += 4;
+    Padding_t padding;
+    padding.padding_left        = dmc_pgm_read_byte(p); p += 1;
+    padding.padding_right       = dmc_pgm_read_byte(p); p += 1;
+    padding.padding_top         = dmc_pgm_read_byte(p); p += 1;
+    padding.padding_bottom      = dmc_pgm_read_byte(p);
+
+    if (padding.is_padded()) {
         constantPad2d(workspace_start, workspace_start,
-                      this->input_channel_size, this->input_row_size, this->input_col_size,
-                      this->padding, this->value);
+                      input_channel_size, input_row_size, input_col_size,
+                      padding, value);
     }
 }
 
-
 uint32_t ConstantPad2d::get_output_size(void) {
-    return this->input_channel_size * \
-            (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * \
-            (this->input_col_size + this->padding.padding_left + this->padding.padding_right);
+    const uint8_t* p = this->buffer;
+    uint16_t input_channel_size = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_row_size     = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_col_size     = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    p += 6;  // skip _pad (2) + value (4)
+    uint8_t padding_left        = dmc_pgm_read_byte(p); p += 1;
+    uint8_t padding_right       = dmc_pgm_read_byte(p); p += 1;
+    uint8_t padding_top         = dmc_pgm_read_byte(p); p += 1;
+    uint8_t padding_bottom      = dmc_pgm_read_byte(p);
+    return (uint32_t)input_channel_size *
+           (input_row_size + padding_top + padding_bottom) *
+           (input_col_size + padding_left + padding_right);
 }
 
-
-
-ConstantPad2d_SQ::ConstantPad2d_SQ(uint16_t input_channel_size, uint16_t input_row_size, 
-                uint16_t input_col_size, int8_t input_value_point, Padding_t padding, uint8_t quantize_property) {
-    this->input_channel_size = input_channel_size;
-    this->input_row_size = input_row_size;
-    this->input_col_size = input_col_size;
-
-    this->input_value_point = input_value_point;
-    this->padding = padding;      
-    
-    this->quantize_property = quantize_property;
-}
 
 
 void constantPad2d_SQ(int8_t* input, int8_t* output,
@@ -119,15 +116,36 @@ void constantPad2d_SQ(int8_t* input, int8_t* output,
 }
 
 void ConstantPad2d_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
-    if (this->padding.is_padded()) {
+    const uint8_t* p = this->buffer;
+    uint16_t input_channel_size = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_row_size     = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_col_size     = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    int8_t input_value_point    = (int8_t)dmc_pgm_read_byte(p);          p += 1;
+    Padding_t padding;
+    padding.padding_left        = dmc_pgm_read_byte(p); p += 1;
+    padding.padding_right       = dmc_pgm_read_byte(p); p += 1;
+    padding.padding_top         = dmc_pgm_read_byte(p); p += 1;
+    padding.padding_bottom      = dmc_pgm_read_byte(p); p += 1;
+    uint8_t quantize_property = (uint8_t)dmc_pgm_read_byte(p);
+
+    if (padding.is_padded()) {
         constantPad2d_SQ(workspace_start, workspace_start,
-                         this->input_channel_size, this->input_row_size, this->input_col_size,
-                         this->padding, this->input_value_point, this->quantize_property);
+                         input_channel_size, input_row_size, input_col_size,
+                         padding, input_value_point, quantize_property);
     }
 }
 
 uint32_t ConstantPad2d_SQ::get_output_size(void) {
-    return this->input_channel_size * \
-        (this->input_row_size + this->padding.padding_top + this->padding.padding_bottom) * \
-        (this->input_col_size + this->padding.padding_left + this->padding.padding_right);
+    const uint8_t* p = this->buffer;
+    uint16_t input_channel_size = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_row_size     = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_col_size     = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    p += 1;  // skip input_value_point
+    uint8_t padding_left        = dmc_pgm_read_byte(p); p += 1;
+    uint8_t padding_right       = dmc_pgm_read_byte(p); p += 1;
+    uint8_t padding_top         = dmc_pgm_read_byte(p); p += 1;
+    uint8_t padding_bottom      = dmc_pgm_read_byte(p);
+    return (uint32_t)input_channel_size *
+           (input_row_size + padding_top + padding_bottom) *
+           (input_col_size + padding_left + padding_right);
 }

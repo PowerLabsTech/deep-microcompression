@@ -112,7 +112,10 @@ class Layer(ABC):
         pass
 
     @abstractmethod
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
+    def get_workspace_size(
+        self, input_shape, data_per_byte,
+        include_locals=False, include_runtime=False, ptr_size=2
+    ) -> int:
         return 0
 
     @abstractmethod
@@ -135,3 +138,23 @@ class Layer(ABC):
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """Generates C header, definition, and parameter strings for bare-metal deployment."""
         pass
+
+    def get_packed_struct(self, var_name, params_info, for_arduino=False):
+        """Generates a named packed Flash struct with no class instantiation."""
+        progmem = "PROGMEM " if for_arduino else ""
+        return (
+            f"static const struct __attribute__((packed)) {{\n"
+            f"{''.join([f'    {t} {n};\n' for t, n, _ in params_info])}"
+            f"}} {var_name} {progmem}= {{\n"
+            f"    {', '.join([v for _, _, v in params_info])}\n"
+            f"}};\n"
+        )
+
+    def get_struct_def(self, var_name, params_info, quantize_scheme=QuantizationScheme.NONE, for_arduino=False):
+        suffix = "" if quantize_scheme == QuantizationScheme.NONE else \
+                 "_DQ" if quantize_scheme == QuantizationScheme.DYNAMIC else "_SQ"
+        return (
+            self.get_packed_struct(f"{var_name}_buffer", params_info, for_arduino)
+            + f"{self.__class__.__name__}{suffix} {var_name}((uint8_t*)&{var_name}_buffer);\n"
+        )
+    

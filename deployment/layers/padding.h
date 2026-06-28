@@ -28,37 +28,27 @@ void constantPad2d_SQ(int8_t* input, int8_t* output,
                       Padding_t padding, int8_t value, uint8_t quantize_property);
 
 
+// ConstantPad2d buffer layout:
+// [input_channel_size: uint16_t | input_row_size: uint16_t | input_col_size: uint16_t |
+//  _pad: uint8_t x2 | value: float |
+//  padding_left: uint8_t | padding_right: uint8_t | padding_top: uint8_t | padding_bottom: uint8_t]
+
 class ConstantPad2d : public Layer {
-private:
-    uint16_t input_channel_size;  ///< Number of input channels
-    uint16_t input_row_size;      ///< Height of input feature map
-    uint16_t input_col_size;      ///< Width of input feature map
-    float value;
-    Padding_t padding;
-
 public:
-    ConstantPad2d(uint16_t input_channel_size, uint16_t input_row_size, 
-                    uint16_t input_col_size, float value, Padding_t padding);
-
+    using Layer::Layer;
     void forward(float* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
 };
 
 
+// ConstantPad2d_SQ buffer layout:
+// [input_channel_size: uint16_t | input_row_size: uint16_t | input_col_size: uint16_t |
+//  input_value_point: int8_t |
+//  padding_left: uint8_t | padding_right: uint8_t | padding_top: uint8_t | padding_bottom: uint8_t]
+
 class ConstantPad2d_SQ : public Layer_SQ {
-private:
-    uint16_t input_channel_size;  ///< Number of input channels
-    uint16_t input_row_size;      ///< Height of input feature map
-    uint16_t input_col_size;      ///< Width of input feature map
-    Padding_t padding;
-
-    int8_t input_value_point;
-    uint8_t quantize_property;
-
-    
 public:
-    ConstantPad2d_SQ(uint16_t input_channel_size, uint16_t input_row_size, 
-                    uint16_t input_col_size, int8_t input_value_point, Padding_t padding,  uint8_t quantize_property);
+    using Layer_SQ::Layer_SQ;
     void forward(int8_t* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
 };

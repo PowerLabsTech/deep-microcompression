@@ -44,7 +44,13 @@ from ..utils import (
 
     ACTIVATION_BITWIDTH_2,
     ACTIVATION_BITWIDTH_4,
-    ACTIVATION_BITWIDTH_8
+    ACTIVATION_BITWIDTH_8,
+
+    UINT8_T,
+    UINT16_T,
+    INT8_T,
+    FLOAT_T,
+    VOID_PTR,
 )
 
 class Conv2d(Layer, nn.Conv2d):
@@ -379,14 +385,35 @@ class Conv2d(Layer, nn.Conv2d):
         return max_D
 
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
+    def get_workspace_size(
+        self, input_shape, data_per_byte,
+        include_locals=False, include_runtime=False, ptr_size=2
+    ) -> int:
         output_channel_per_group = self.out_channels // self.groups
-        workspace_size = math.ceil(
-            self.get_padded_input_tensor_shape(input_shape).numel() / data_per_byte
-        )
-        workspace_size += math.ceil(self.get_workspace_debt(input_shape) / data_per_byte)
-        workspace_size += math.ceil(output_channel_per_group / data_per_byte)
-        return workspace_size
+        base = math.ceil(self.get_padded_input_tensor_shape(input_shape).numel() / data_per_byte)
+        base += math.ceil(self.get_workspace_debt(input_shape) / data_per_byte)
+        base += math.ceil(output_channel_per_group / data_per_byte)
+        if not (include_locals or include_runtime):
+            return base
+        scheme = None
+        if self.is_quantized:
+            scheme = self.weight_quantize.scheme
+        if scheme == QuantizationScheme.STATIC:
+            # 4×u16 + 7×u8 from conv header + f32 output_scale + i8 output_zp + i8 input_zp + u8 property
+            locals_size  = 22
+            # 3 Flash ptrs + 2 workspace alias ptrs + computed(20) + 4 fn ptrs + loops(15) + extras(scale_index u8+val i32=5)
+            runtime_size = 40 + 9 * ptr_size
+        elif scheme == QuantizationScheme.DYNAMIC:
+            # 4×u16 + 7×u8 from conv header + u8 quantize_property
+            locals_size  = 16
+            # 3 Flash ptrs + 2 workspace alias ptrs + computed(12) + 1 fn ptr + loops(15) + scale_index u8
+            runtime_size = 28 + 6 * ptr_size
+        else:
+            # 4×u16 + 7×u8 from conv header
+            locals_size  = 15
+            # 2 Flash ptrs + 2 workspace alias ptrs + computed(12) + loops(15)
+            runtime_size = 27 + 4 * ptr_size
+        return base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0)
 
 
     def get_padded_input_tensor_shape(self, input_shape) -> torch.Size:
@@ -475,7 +502,7 @@ class Conv2d(Layer, nn.Conv2d):
             if self.is_quantized and hasattr(self, "bias_quantize"):
                 bias_bitwidth = self.bias_quantize.bitwidth
             param_header, param_def = convert_tensor_to_bytes_var(
-                bias, 
+                bias,
                 f"{var_name}_bias",
                 bias_bitwidth,
                 for_arduino=for_arduino
@@ -487,21 +514,28 @@ class Conv2d(Layer, nn.Conv2d):
         if self.is_quantized:
             scheme = self.weight_quantize.scheme
 
+        def _pair(x): return x if isinstance(x, tuple) else (x, x)
+        padding_row, padding_col = _pair(self.padding)
+
         if scheme is None or scheme == QuantizationScheme.NONE:
-            if self.bias is not None:
-                layer_def = (
-                    f"{self.__class__.__name__} {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(float*){var_name}_weight, (float*){var_name}_bias);\n"
-                )
-            else:
-                layer_def = (
-                    f"{self.__class__.__name__} {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(float*){var_name}_weight, nullptr);\n"
-                )
+            bias_ptr = f"(void*){var_name}_bias" if self.bias is not None else "nullptr"
+            params_info = [
+                (UINT16_T, "input_channel", str(input_channel_size)),
+                (UINT16_T, "input_row",     str(input_row_size)),
+                (UINT16_T, "input_col",     str(input_col_size)),
+                (UINT16_T, "output_channel", str(output_channel_size)),
+                (UINT8_T,  "kernel_row",    str(kernel_row_size)),
+                (UINT8_T,  "kernel_col",    str(kernel_col_size)),
+                (UINT8_T,  "padding_row",   str(padding_row)),
+                (UINT8_T,  "padding_col",   str(padding_col)),
+                (UINT8_T,  "stride_row",    str(stride_row)),
+                (UINT8_T,  "stride_col",    str(stride_col)),
+                (UINT8_T,  "groups",        str(groups)),
+                (UINT8_T,  "_align",        "0"),
+                (VOID_PTR, "weight",        f"(void*){var_name}_weight"),
+                (VOID_PTR, "bias",          bias_ptr),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
             layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
             
         elif scheme == QuantizationScheme.DYNAMIC:
@@ -509,7 +543,7 @@ class Conv2d(Layer, nn.Conv2d):
             scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
             granularity = self.__dict__["_dmc"]["quantize"]["granularity"]
             parameter_bitwidth = self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"]
-            
+
             quantize_property = ""
 
             if granularity == QuantizationGranularity.PER_TENSOR:
@@ -529,25 +563,28 @@ class Conv2d(Layer, nn.Conv2d):
             else:
                 raise QuantizationBitWidthError(parameter_bitwidth)
 
-            if self.bias is not None:
-                layer_def = (
-                    f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, (float*){var_name}_bias,  (float*){var_name}_weight_scale, "
-                    f"{quantize_property});\n"
-                )
-            else:     
-                layer_def = (
-                    f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, nullptr,  (float*){var_name}_weight_scale, "
-                    f"{quantize_property});\n"
-                )
+            bias_ptr = f"(void*){var_name}_bias" if self.bias is not None else "nullptr"
+            params_info = [
+                (UINT16_T, "input_channel",    str(input_channel_size)),
+                (UINT16_T, "input_row",        str(input_row_size)),
+                (UINT16_T, "input_col",        str(input_col_size)),
+                (UINT16_T, "output_channel",   str(output_channel_size)),
+                (UINT8_T,  "kernel_row",       str(kernel_row_size)),
+                (UINT8_T,  "kernel_col",       str(kernel_col_size)),
+                (UINT8_T,  "padding_row",      str(padding_row)),
+                (UINT8_T,  "padding_col",      str(padding_col)),
+                (UINT8_T,  "stride_row",       str(stride_row)),
+                (UINT8_T,  "stride_col",       str(stride_col)),
+                (UINT8_T,  "groups",           str(groups)),
+                (UINT8_T,  "_align",           "0"),
+                (VOID_PTR, "weight",           f"(void*){var_name}_weight"),
+                (VOID_PTR, "bias",             bias_ptr),
+                (VOID_PTR, "weight_scale",     f"(void*){var_name}_weight_scale"),
+                (UINT8_T,  "quantize_property", quantize_property),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.DYNAMIC, for_arduino)
             layer_header += f"extern {self.__class__.__name__}_DQ {var_name};\n\n"
-                
-                
+
             param_header, param_def = convert_tensor_to_bytes_var(
                 self.weight_quantize.scale,
                 f"{var_name}_weight_scale",
@@ -557,7 +594,7 @@ class Conv2d(Layer, nn.Conv2d):
             layer_param_def += param_def
 
         elif scheme == QuantizationScheme.STATIC:
-            
+
             scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
             granularity = self.__dict__["_dmc"]["quantize"]["granularity"]
             parameter_bitwidth = self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"]
@@ -593,50 +630,34 @@ class Conv2d(Layer, nn.Conv2d):
                 quantize_property += PARAMETER_BITWIDTH_2
             else:
                 raise QuantizationBitWidthError(parameter_bitwidth)
-            
-            if self.bias is not None:
-                layer_def = (
-                    f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
-                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, "
-                    f"{quantize_property});\n"
-                )
-            else:
-                layer_def = (
-                    f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, nullptr, "
-                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, "
-                    f"{quantize_property});\n"
-                )
+
+            output_scale_val      = float(self.output_quantize.scale.item())
+            output_zero_point_val = int(self.output_quantize.zero_point.item())
+            input_zero_point_val  = int(self.input_quantize.zero_point.item())
+            bias_ptr = f"(void*){var_name}_bias" if self.bias is not None else "nullptr"
+            params_info = [
+                (UINT16_T, "input_channel",      str(input_channel_size)),
+                (UINT16_T, "input_row",          str(input_row_size)),
+                (UINT16_T, "input_col",          str(input_col_size)),
+                (UINT16_T, "output_channel",     str(output_channel_size)),
+                (UINT8_T,  "kernel_row",         str(kernel_row_size)),
+                (UINT8_T,  "kernel_col",         str(kernel_col_size)),
+                (UINT8_T,  "padding_row",        str(padding_row)),
+                (UINT8_T,  "padding_col",        str(padding_col)),
+                (UINT8_T,  "stride_row",         str(stride_row)),
+                (UINT8_T,  "stride_col",         str(stride_col)),
+                (UINT8_T,  "groups",             str(groups)),
+                (UINT8_T,  "_align",             "0"),
+                (VOID_PTR, "weight",             f"(void*){var_name}_weight"),
+                (VOID_PTR, "bias",               bias_ptr),
+                (VOID_PTR, "bias_scale",         f"(void*){var_name}_bias_scale"),
+                (FLOAT_T,  "output_scale",       f"{output_scale_val:.9g}f"),
+                (INT8_T,   "output_zero_point", str(output_zero_point_val)),
+                (INT8_T,   "input_zero_point",  str(input_zero_point_val)),
+                (UINT8_T,  "quantize_property",  quantize_property),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.STATIC, for_arduino)
             layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.output_quantize.scale, 
-                f"{var_name}_output_scale"
-            )
-            layer_header += param_header
-            layer_param_def += param_def
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.output_quantize.zero_point, 
-                f"{var_name}_output_zero_point"
-            )
-
-            layer_header += param_header
-            layer_param_def += param_def
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.input_quantize.zero_point, 
-                f"{var_name}_input_zero_point"
-            )
-            layer_header += param_header
-            layer_param_def += param_def
 
             if self.bias is not None:
                 bias_scale = self.bias_quantize.scale

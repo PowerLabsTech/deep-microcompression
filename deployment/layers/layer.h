@@ -23,25 +23,32 @@
  * All concrete layer types must implement the forward() method.
  */
 class Layer {
+protected:
+    uint8_t *buffer;
+
 public:
     /**
      * @brief In-place forward pass for floating-point layers.
      * @param workspace_start Shared workspace buffer; input on entry, output on exit.
      * @param workspace_size  Number of float elements in workspace_start.
      */
+    Layer(uint8_t* buffer);
     virtual void forward(float* workspace_start, uint32_t workspace_size) = 0;
     virtual uint32_t get_output_size(void) = 0;
 };
 
 
 class Layer_SQ {
+protected:
+    uint8_t *buffer;
+
 public:
     /**
      * @brief In-place forward pass for statically-quantized layers.
      * @param workspace_start Shared workspace buffer (int8_t*); input on entry, output on exit.
      * @param workspace_size  Size of workspace_start in bytes.
      */
-    uint8_t quantize_property;
+    Layer_SQ(uint8_t* buffer);
     virtual void forward(int8_t* workspace_start, uint32_t workspace_size) = 0;
     virtual uint32_t get_output_size(void) = 0;
 };

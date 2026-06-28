@@ -1,43 +1,22 @@
-/**
- * @file sequential.cpp
- * @brief Implementation of sequential neural network model with:
- *      1. Support for both floating-point and quantized inference
- *      2. Double-buffering memory strategy for efficient layer processing
- *      3. Workspace optimization for memory-constrained devices
- * 
- * The implementation uses compile-time switching between floating-point
- * and quantized versions via STATIC_QUANTIZATION_PER_TENSOR define
- */
-
 #include "sequential.h"
 
-/**
- * @brief Constructs a floating-point sequential model
- * @param layers Array of layer pointers
- * @param layers_len Number of layers in model
- * @param workspace Pre-allocated workspace buffer (float)
- * @param workspace_size Size of the pre-allocated workspace memory
- * 
- * @note Uses ping-pong strategy to alternate between workspace_even_layer
- *       and workspace_odd_layer for memory efficiency
- */
-Sequential::Sequential(Layer **layers, uint8_t layers_len, float *workspace_start, uint32_t workspace_size) {
-    this->layers = layers;
-    this->layers_len = layers_len;
+
+// ── Sequential (float) ────────────────────────────────────────────────────────
+
+Sequential::Sequential(const uint8_t* buffer, float* workspace_start, uint32_t workspace_size) {
+    this->buffer          = buffer;
     this->workspace_start = workspace_start;
-    this->workspace_size = workspace_size;
+    this->workspace_size  = workspace_size;
 }
 
-/**
- * @brief Executes forward pass through all layers
- * 
- * Alternates between workspace buffers for each layer to minimize memory usage:
- * - Even layers write to odd workspace
- * - Odd layers write to even workspace
- */
 void Sequential::predict(void) {
-    for (uint8_t i = 0; i < this->layers_len; i++) {
-        this->layers[i]->forward(this->workspace_start, this->workspace_size);
+    const uint8_t* p = this->buffer;
+    uint32_t required_size = dmc_pgm_read_dword((const uint32_t*)p); p += 4;
+    uint8_t  layers_len    = dmc_pgm_read_byte(p);                   p += 1;
+    if (this->workspace_size < required_size) return;
+    for (uint8_t i = 0; i < layers_len; i++) {
+        Layer* layer = (Layer*)dmc_pgm_read_ptr(p); p += DMC_PTR_SIZE;
+        layer->forward(this->workspace_start, required_size);
     }
 }
 
@@ -49,28 +28,39 @@ void Sequential::set_input(uint32_t index, float value) {
     activation_write_float(this->workspace_start, index, value);
 }
 
-Sequential_SQ::Sequential_SQ(Layer_SQ **layers, uint8_t layers_len, int8_t *workspace_start, uint32_t workspace_size, uint8_t quantize_property) {
-    this->layers = layers;
-    this->layers_len = layers_len;
+
+// ── Sequential_SQ (static quantization) ──────────────────────────────────────
+
+// Buffer layout: [workspace_size:u32 | layers_len:u8 | quantize_property:u8 | layer0:ptr | ...]
+
+Sequential_SQ::Sequential_SQ(const uint8_t* buffer, int8_t* workspace_start, uint32_t workspace_size) {
+    this->buffer          = buffer;
     this->workspace_start = workspace_start;
-    this->workspace_size = workspace_size;
-    this->quantize_property = quantize_property;
+    this->workspace_size  = workspace_size;
 }
 
 void Sequential_SQ::predict(void) {
-    for (uint8_t i = 0; i < this->layers_len; i++) {
-        this->layers[i]->forward(this->workspace_start, workspace_size);
+    const uint8_t* p = this->buffer;
+    uint32_t required_size     = dmc_pgm_read_dword((const uint32_t*)p); p += 4;
+    uint8_t  layers_len        = dmc_pgm_read_byte(p);                   p += 1;
+    uint8_t  quantize_property = dmc_pgm_read_byte(p);                   p += 1;
+    if (this->workspace_size < required_size) return;
+    for (uint8_t i = 0; i < layers_len; i++) {
+        Layer_SQ* layer = (Layer_SQ*)dmc_pgm_read_ptr(p); p += DMC_PTR_SIZE;
+        layer->forward(this->workspace_start, required_size);
     }
 }
 
 int8_t Sequential_SQ::get_output(uint32_t index) {
-    int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
-    get_activation_read_packed_intb(this->quantize_property, &activation_read_packed_intb);
+    uint8_t quantize_property = dmc_pgm_read_byte(this->buffer + 5);
+    int8_t (*activation_read_packed_intb)(int8_t*, uint32_t);
+    get_activation_read_packed_intb(quantize_property, &activation_read_packed_intb);
     return activation_read_packed_intb(this->workspace_start, index);
 }
 
 void Sequential_SQ::set_input(uint32_t index, int8_t value) {
-    void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
-    get_activation_write_packed_intb(this->quantize_property, &activation_write_packed_intb);
-    activation_write_packed_intb(this->workspace_start, index, value);
+    uint8_t quantize_property = dmc_pgm_read_byte(this->buffer + 5);
+    void (*activation_read_packed_intb)(int8_t*, uint32_t, int8_t);
+    get_activation_write_packed_intb(quantize_property, &activation_read_packed_intb);
+    activation_read_packed_intb(this->workspace_start, index, value);
 }

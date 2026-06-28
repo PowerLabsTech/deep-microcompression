@@ -55,7 +55,12 @@ from ..utils import (
     convert_tensor_to_bytes_var,
     ACTIVATION_BITWIDTH_2,
     ACTIVATION_BITWIDTH_4,
-    ACTIVATION_BITWIDTH_8
+    ACTIVATION_BITWIDTH_8,
+    INT8_T,
+    UINT8_T,
+    UINT32_T,
+    VOID_PTR,
+    FLOAT_T
 )
 from .fuse import *
 
@@ -1036,15 +1041,18 @@ class Sequential(nn.Sequential):
 
 
 
-    def get_workspace_size(self, input_shape:Tuple) -> int:
+    def get_workspace_size(
+        self, input_shape: Tuple,
+        include_locals=False, include_runtime=False, ptr_size=2
+    ) -> int:
         """
         Calculates the minimum SRAM (Static RAM) required for inference.
 
-        This method estimates the "Ping-Pong" buffer sizes (Arena A and Arena B) 
-        needed for bare-metal deployment. 
+        This method estimates the "Ping-Pong" buffer sizes (Arena A and Arena B)
+        needed for bare-metal deployment.
 
         Strategy:
-        Instead of allocating memory for every intermediate tensor, DMC uses a 
+        Instead of allocating memory for every intermediate tensor, DMC uses a
         shared buffers. The shared buffer is managed by either left aligning the data to the
         start or right aligning it to the end, ensuring no space fragmentation.
         Layer i reads its input from the start of the workspace and writes its output to be right
@@ -1052,34 +1060,56 @@ class Sequential(nn.Sequential):
         Layer i+1 reads its input from the end of the workspace with the none offset and writes its output
         to the start of the workspace
 
-        :param: input_shape: Dimensions of the network input.
-        
+        :param input_shape: Dimensions of the network input.
+        :param include_locals: Include buffer-read scalar locals held during layer computation.
+        :param include_runtime: Include loop counters, fn pointers, and derived scalars.
+        :param ptr_size: Pointer byte width (default 2 for AVR).
+
         :return: max_layer_acitivation_workspace_size: The peak byte requirements for the activations of the model.
         """
 
         if isinstance(input_shape, tuple):
             input_shape = torch.Size(input_shape)
-        max_layer_acitivation_workspace_size = 0
-        
+
         data_per_byte = 1
-        
+        if self.is_quantized:
+            scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
+            if scheme == QuantizationScheme.STATIC:
+                activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["activation_bitwidth"]
+                data_per_byte = 8 // activation_bitwidth
+
+        max_layer_workspace_size = 0
+        output_shape = input_shape
+        for layer in self.layers():
+            layer_workspace_size = layer.get_workspace_size(
+                torch.Size(output_shape), data_per_byte, include_locals, include_runtime, ptr_size
+            )
+            output_shape = layer.get_output_tensor_shape(torch.Size(output_shape))
+            max_layer_workspace_size = max(max_layer_workspace_size, layer_workspace_size)
+
+        if not (include_locals or include_runtime):
+            return max_layer_workspace_size
+
+        def _count_all_layers(module) -> int:
+            """Recursively count every registered sub-module (Layer instance) in the tree."""
+            count = 0
+            for child in module._modules.values():
+                count += 1
+                count += _count_all_layers(child)
+            return count
+
+        total_layers = _count_all_layers(self)
         scheme = None
         if self.is_quantized:
             scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
+        # Buffer-read scalars: uint32_t workspace_size (4) + uint8_t layers_len (1) [+ uint8_t quantize_property (1) for SQ]
+        buf_locals = 5 + (1 if scheme == QuantizationScheme.STATIC else 0)
+        # All Layer objects anywhere in the tree live in static RAM (ptr_size each for buffer ptr).
+        seq_locals  = (buf_locals + total_layers * ptr_size) if include_locals else 0
+        # uint8_t i loop counter + Layer* temp for indirect call
+        seq_runtime = (1 + ptr_size) if include_runtime else 0
 
-            if scheme == QuantizationScheme.STATIC:
-                activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["activation_bitwidth"]
-                data_per_byte = (8 // activation_bitwidth)
-
-        output_shape = input_shape
-        # Track maximum tensor sizes at even/odd layers
-        for layer in self.layers():
-            layer_workspace_size = layer.get_workspace_size(torch.Size(output_shape), data_per_byte)
-            output_shape = layer.get_output_tensor_shape(torch.Size(output_shape))
-            # Calculate bytes required (applying packing factor)
-            max_layer_acitivation_workspace_size = max(max_layer_acitivation_workspace_size, layer_workspace_size)
-        
-        return max_layer_acitivation_workspace_size
+        return max_layer_workspace_size + seq_locals + seq_runtime
 
 
     @torch.no_grad()
@@ -1143,66 +1173,47 @@ class Sequential(nn.Sequential):
         if self.is_quantized:
             scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
 
+        progmem = "PROGMEM " if for_arduino else ""
+        ws = max_layer_acitivation_workspace_size
+
         if scheme != QuantizationScheme.STATIC:
-            
-            workspace_header = (
-                f"#define WORKSPACE_SIZE {max_layer_acitivation_workspace_size}\n"
-                f"extern float workspace[WORKSPACE_SIZE];\n\n"
-            )
-            workspace_def = f"float workspace[WORKSPACE_SIZE];\n\n"
-
-            layers_header = (
-                f"#define LAYERS_LEN {len(self)}\n"
-                f"extern Layer* layers[LAYERS_LEN];\n\n"
-                f"extern Sequential {var_name};\n\n"
-            )
-            layers_def = (
-                f"\n{self.__class__.__name__} {var_name}(layers, LAYERS_LEN, workspace, WORKSPACE_SIZE);"
-                f"\nLayer* layers[LAYERS_LEN] = {{\n"
-            )
-        
+            workspace_type   = FLOAT_T
+            class_suffix     = ""
+            seq_params_info  = [
+                (UINT32_T, "workspace_size", str(ws)),
+                (UINT8_T,  "layers_len",     str(len(self))),
+            ]
         else:
-            scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
             activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["activation_bitwidth"]
-
-            quantize_property = ""
-
             if activation_bitwidth == 8:
-                quantize_property += ACTIVATION_BITWIDTH_8
+                quantize_property = ACTIVATION_BITWIDTH_8
             elif activation_bitwidth == 4:
-                quantize_property += ACTIVATION_BITWIDTH_4
+                quantize_property = ACTIVATION_BITWIDTH_4
             elif activation_bitwidth == 2:
-                quantize_property += ACTIVATION_BITWIDTH_2
+                quantize_property = ACTIVATION_BITWIDTH_2
             else:
                 raise QuantizationBitWidthError(activation_bitwidth)
-            
-            workspace_header = (
-                f"#define WORKSPACE_SIZE {max_layer_acitivation_workspace_size}\n"
-                f"extern int8_t workspace[WORKSPACE_SIZE];\n\n"
-            )
-            workspace_def = f"int8_t workspace[WORKSPACE_SIZE];\n\n"
+            workspace_type   = INT8_T
+            class_suffix     = "_SQ"
+            seq_params_info  = [
+                (UINT32_T, "workspace_size",     str(ws)),
+                (UINT8_T,  "layers_len",         str(len(self))),
+                (UINT8_T,  "quantize_property",  quantize_property),
+            ]
 
-            layers_header = (
-                f"#define LAYERS_LEN {len(self)}\n"
-                f"extern Layer_SQ* layers[LAYERS_LEN];\n\n"
-                f"extern Sequential_SQ {var_name};\n\n"
-            )
-            layers_def = (
-                f"{self.__class__.__name__}_SQ {var_name}(layers, LAYERS_LEN, workspace, WORKSPACE_SIZE, {quantize_property});\n"
-                f"\nLayer_SQ* layers[LAYERS_LEN] = {{\n"
-            )    
+        workspace_header = (
+            f"#define WORKSPACE_SIZE {ws}\n"
+            f"extern {workspace_type} workspace[WORKSPACE_SIZE];\n\n"
+        )
+        workspace_def = f"{workspace_type} workspace[WORKSPACE_SIZE];\n\n"
 
-        header_file += workspace_header
-        definition_file += workspace_def
-
-        # Generate layer declarations
+        # Generate per-layer code and collect layer pointers for the Sequential buffer
+        layer_header_acc = ""
         pre_flatten_shape = None  # shape going into the most recent Flatten, for Linear weight reordering
 
         for layer_name, layer in self.names_layers():
+            seq_params_info.append((VOID_PTR, layer_name, f"(void*)&{layer_name}"))
 
-            layers_def += f"    &{layer_name},\n"
-
-            # To allow linear layer to format the input from CHW to HWC after flatten
             if isinstance(layer, Linear):
                 layer_header, layer_def, layer_param_def = layer.convert_to_c(
                     layer_name, input_shape, for_arduino=for_arduino, conv_shape=pre_flatten_shape
@@ -1214,17 +1225,31 @@ class Sequential(nn.Sequential):
                 )
                 pre_flatten_shape = input_shape if isinstance(layer, Flatten) else None
 
-            layers_header += layer_header
-
+            layer_header_acc    += layer_header
             param_definition_file += layer_param_def
-            definition_file += layer_def
+            definition_file     += layer_def
+            input_shape = layer.get_output_tensor_shape(torch.Size(input_shape))
 
-            input_shape = layer.get_output_tensor_shape(torch.Size(input_shape))  
-        
-        layers_def += "};\n"
-        definition_file += layers_def
-        header_file += layers_header
-        header_file += f"\n#endif //{var_name.upper()}_h\n"
+        # Build Sequential packed-struct buffer (all pointers in Flash)
+        fields  = ''.join([f'    {t} {n};\n' for t, n, _ in seq_params_info])
+        values  = ',\n    '.join([v for _, _, v in seq_params_info])
+        seq_buf = (
+            f"static const struct __attribute__((packed)) {{\n"
+            f"{fields}"
+            f"}} {var_name}_buffer {progmem}= {{\n"
+            f"    {values}\n"
+            f"}};\n"
+            f"Sequential{class_suffix} {var_name}((const uint8_t*)&{var_name}_buffer, workspace, WORKSPACE_SIZE);\n"
+        )
+
+        layers_header = (
+            f"#define LAYERS_LEN {len(self)}\n"
+            f"extern Sequential{class_suffix} {var_name};\n\n"
+        )
+
+        header_file  += workspace_header + layers_header + layer_header_acc
+        header_file  += f"\n#endif //{var_name.upper()}_h\n"
+        definition_file += workspace_def + seq_buf
 
         # Write files
         write_str_to_c_file(header_file, f"{var_name}.h", include_dir)

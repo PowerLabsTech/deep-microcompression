@@ -25,6 +25,9 @@ from ..utils import (
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_2,
+
+    UINT8_T,
+    UINT32_T,
 )
 
 
@@ -77,8 +80,11 @@ class Flatten(Layer, nn.Flatten):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)
+    def get_workspace_size(
+        self, input_shape, data_per_byte,
+        include_locals=False, include_runtime=False, ptr_size=2
+    ) -> int:
+        return math.ceil(input_shape.numel() / data_per_byte)  # forward is a no-op; 0 extra locals
 
     def get_output_tensor_shape(self, input_shape: torch.Size):
         return torch.Size((input_shape.numel(),))
@@ -91,7 +97,10 @@ class Flatten(Layer, nn.Flatten):
             scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
 
         if scheme != QuantizationScheme.STATIC:
-            layer_def = f"{self.__class__.__name__} {var_name}({input_size});\n"
+            params_info = [
+                (UINT32_T, "input_size", str(input_size)),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
             layer_header = f"extern {self.__class__.__name__} {var_name};\n\n"
         else:
             activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
@@ -104,7 +113,11 @@ class Flatten(Layer, nn.Flatten):
             else:
                 raise QuantizationBitWidthError(activation_bitwidth)
 
-            layer_def = f"{self.__class__.__name__}_SQ {var_name}({input_size}, {quantize_property});\n"
+            params_info = [
+                (UINT32_T, "input_size",        str(input_size)),
+                (UINT8_T,  "quantize_property", quantize_property),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.STATIC, for_arduino)
             layer_header = f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
 
         return layer_header, layer_def, ""

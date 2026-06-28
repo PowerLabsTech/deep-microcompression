@@ -45,7 +45,13 @@ from ..utils import (
 
     ACTIVATION_BITWIDTH_2,
     ACTIVATION_BITWIDTH_4,
-    ACTIVATION_BITWIDTH_8
+    ACTIVATION_BITWIDTH_8,
+
+    UINT8_T,
+    UINT16_T,
+    INT8_T,
+    FLOAT_T,
+    VOID_PTR,
 )
 
 class Linear(Layer, nn.Linear):
@@ -320,9 +326,33 @@ class Linear(Layer, nn.Linear):
         return weight, bias
 
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)\
-            + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte)
+    def get_workspace_size(
+        self, input_shape, data_per_byte,
+        include_locals=False, include_runtime=False, ptr_size=2
+    ) -> int:
+        base = (math.ceil(input_shape.numel() / data_per_byte)
+                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+        if not (include_locals or include_runtime):
+            return base
+        scheme = None
+        if self.is_quantized:
+            scheme = self.weight_quantize.scheme
+        if scheme == QuantizationScheme.STATIC:
+            # u16 output + u16 input + f32 output_scale + i8 output_zp + i8 input_zp + u8 property
+            locals_size  = 11
+            # 3 Flash ptrs + 2 workspace alias ptrs + computed(12) + 4 fn ptrs + loops(j u16+i u16) + accum(output_temp i32+scale_index u8+val i32)
+            runtime_size = 25 + 9 * ptr_size
+        elif scheme == QuantizationScheme.DYNAMIC:
+            # u16 output + u16 input + u8 property
+            locals_size  = 5
+            # 3 Flash ptrs + 2 workspace alias ptrs + 1 fn ptr + loops + accum(output_temp f32+scale_index u8)
+            runtime_size = 9 + 6 * ptr_size
+        else:
+            # u16 output + u16 input
+            locals_size  = 4
+            # 2 Flash ptrs + 2 workspace alias ptrs + loops(j u16+i u16) + output_temp f32
+            runtime_size = 8 + 4 * ptr_size
+        return base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0)
 
     def get_output_tensor_shape(self, input_shape) -> torch.Size:
         """Calculates output shape for memory planning."""
@@ -394,16 +424,20 @@ class Linear(Layer, nn.Linear):
         if self.is_quantized:
             scheme = self.weight_quantize.scheme
 
+        bias_ptr = f"(void*){var_name}_bias" if self.bias is not None else "nullptr"
+
         if scheme is None or scheme == QuantizationScheme.NONE:
-            if self.bias is not None:
-                layer_def = f"{self.__class__.__name__} {var_name}({output_feature_size}, {input_feature_size}, (float*){var_name}_weight, (float*){var_name}_bias);\n"
-            else:
-                layer_def = f"{self.__class__.__name__} {var_name}({output_feature_size}, {input_feature_size}, (float*){var_name}_weight, nullptr);\n"
+            params_info = [
+                (UINT16_T, "output_size", str(output_feature_size)),
+                (UINT16_T, "input_size",  str(input_feature_size)),
+                (VOID_PTR, "weight",      f"(void*){var_name}_weight"),
+                (VOID_PTR, "bias",        bias_ptr),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
             layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
-                
+
         elif scheme == QuantizationScheme.DYNAMIC:
 
-            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
             granularity = self.__dict__["_dmc"]["quantize"]["granularity"]
             parameter_bitwidth = self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"]
 
@@ -426,10 +460,15 @@ class Linear(Layer, nn.Linear):
             else:
                 raise QuantizationBitWidthError(parameter_bitwidth)
 
-            if self.bias is not None:
-                layer_def = f"{self.__class__.__name__}_DQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, (float*){var_name}_bias, (float*){var_name}_weight_scale, {quantize_property});\n"
-            else:
-                layer_def = f"{self.__class__.__name__}_DQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, nullptr, (float*){var_name}_weight_scale, {quantize_property});\n"
+            params_info = [
+                (UINT16_T, "output_size",    str(output_feature_size)),
+                (UINT16_T, "input_size",     str(input_feature_size)),
+                (VOID_PTR, "weight",         f"(void*){var_name}_weight"),
+                (VOID_PTR, "bias",           bias_ptr),
+                (VOID_PTR, "weight_scale",   f"(void*){var_name}_weight_scale"),
+                (UINT8_T,  "quantize_property", quantize_property),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.DYNAMIC, for_arduino)
             layer_header += f"extern {self.__class__.__name__}_DQ {var_name};\n\n"
 
             param_header, param_def = convert_tensor_to_bytes_var(
@@ -439,10 +478,9 @@ class Linear(Layer, nn.Linear):
             )
             layer_header += param_header
             layer_param_def += param_def
-            
+
         elif scheme == QuantizationScheme.STATIC:
-            
-            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+
             granularity = self.__dict__["_dmc"]["quantize"]["granularity"]
             parameter_bitwidth = self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"]
             activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
@@ -468,7 +506,7 @@ class Linear(Layer, nn.Linear):
                 raise QuantizationBitWidthError(activation_bitwidth)
 
             quantize_property += "_"
-            
+
             if parameter_bitwidth == 8:
                 quantize_property += PARAMETER_BITWIDTH_8
             elif parameter_bitwidth == 4:
@@ -478,40 +516,22 @@ class Linear(Layer, nn.Linear):
             else:
                 raise QuantizationBitWidthError(parameter_bitwidth)
 
-            if self.bias is not None:
-                layer_def = (
-                    f"{self.__class__.__name__}_SQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
-                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, *(int8_t*){var_name}_input_zero_point, "
-                    f"(float*){var_name}_bias_scale, {quantize_property});\n"
-                )
-            else:
-                layer_def = (
-                    f"{self.__class__.__name__}_SQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, nullptr, "
-                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, *(int8_t*){var_name}_input_zero_point, "
-                    f"(float*){var_name}_bias_scale, {quantize_property});\n"
-                )
+            output_scale_val      = float(self.output_quantize.scale.item())
+            output_zero_point_val = int(self.output_quantize.zero_point.item())
+            input_zero_point_val  = int(self.input_quantize.zero_point.item())
+            params_info = [
+                (UINT16_T, "output_size",       str(output_feature_size)),
+                (UINT16_T, "input_size",        str(input_feature_size)),
+                (FLOAT_T,  "output_scale",      f"{output_scale_val:.9g}f"),
+                (VOID_PTR, "weight",            f"(void*){var_name}_weight"),
+                (VOID_PTR, "bias",              bias_ptr),
+                (VOID_PTR, "bias_scale",        f"(void*){var_name}_bias_scale"),
+                (INT8_T,   "output_zero_point", str(output_zero_point_val)),
+                (INT8_T,   "input_zero_point",  str(input_zero_point_val)),
+                (UINT8_T,  "quantize_property", quantize_property),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.STATIC, for_arduino)
             layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.output_quantize.scale, 
-                f"{var_name}_output_scale"
-            )
-            layer_header += param_header
-            layer_param_def += param_def
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.output_quantize.zero_point, 
-                f"{var_name}_output_zero_point"
-            )
-            layer_header += param_header
-            layer_param_def += param_def
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.input_quantize.zero_point, 
-                f"{var_name}_input_zero_point"
-            )
-            layer_header += param_header
-            layer_param_def += param_def
 
             if self.bias is not None:
                 bias_scale = self.bias_quantize.scale
@@ -521,7 +541,7 @@ class Linear(Layer, nn.Linear):
             # removing scales for channels that have been pruned away
             if self.is_pruned_channel and granularity == QuantizationGranularity.PER_CHANNEL:
                 bias_scale = self.bias_prune_channel.apply(bias_scale)
-        
+
             param_header, param_def = convert_tensor_to_bytes_var(
                 bias_scale,
                 f"{var_name}_bias_scale",
@@ -529,6 +549,5 @@ class Linear(Layer, nn.Linear):
             )
             layer_header += param_header
             layer_param_def += param_def
-
 
         return layer_header, layer_def, layer_param_def

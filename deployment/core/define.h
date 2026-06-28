@@ -28,12 +28,18 @@
     #define dmc_pgm_read_word(addr)  pgm_read_word(addr)
     #define dmc_pgm_read_dword(addr) pgm_read_dword(addr)
     #define dmc_pgm_read_float(addr) pgm_read_float(addr)
+    // AVR pointers are 16-bit; stored and read as uint16_t
+    #define DMC_PTR_SIZE             2
+    #define dmc_pgm_read_ptr(addr)   ((void*)(uintptr_t)pgm_read_word(addr))
 #else
     // Standard Von Neumann (ARM, x86, RISC-V) - Flash is mapped to memory
     #define dmc_pgm_read_byte(addr)  (*(const uint8_t*)(addr))
     #define dmc_pgm_read_word(addr)  (*(const uint16_t*)(addr))
     #define dmc_pgm_read_dword(addr) (*(const uint32_t*)(addr))
     #define dmc_pgm_read_float(addr) (*(const float*)(addr))
+    // ARM/x86 pointers are 32-bit; stored and read as uint32_t
+    #define DMC_PTR_SIZE             4
+    #define dmc_pgm_read_ptr(addr)   ((void*)(uintptr_t)dmc_pgm_read_dword(addr))
 #endif
 
 

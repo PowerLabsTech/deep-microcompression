@@ -13,6 +13,10 @@ from ..utils import (
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_2,
+
+    UINT8_T,
+    UINT32_T,
+    INT8_T,
 )
 
 from .layer import Layer
@@ -67,8 +71,24 @@ class ReLU(Layer, nn.ReLU):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)
+    def get_workspace_size(
+        self, input_shape,data_per_byte,
+        include_locals=False, include_runtime=False, ptr_size=2
+    ) -> int:
+        base = math.ceil(input_shape.numel() / data_per_byte)
+        if not (include_locals or include_runtime):
+            return base
+        scheme = None
+        if self.is_quantized:
+            scheme = self.input_quantize.scheme
+        if scheme == QuantizationScheme.STATIC:
+            locals_size  = 6               # uint32_t input_size + int8_t zero_point + uint8_t property
+            runtime_size = 4 + 2 * ptr_size  # uint32_t i + 2 fn ptrs
+        else:
+            locals_size  = 4               # uint32_t input_size
+            runtime_size = 4               # uint32_t i
+        return base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0)
+
 
     def get_output_tensor_shape(self, input_shape):
         return input_shape
@@ -84,7 +104,10 @@ class ReLU(Layer, nn.ReLU):
             scheme = self.input_quantize.scheme
 
         if scheme != QuantizationScheme.STATIC:
-            layer_def = f"{self.__class__.__name__} {var_name}({input_size});\n"
+            params_info = [
+                (UINT32_T, "input_size", str(input_size)),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
             layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
         else:
             activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
@@ -97,15 +120,14 @@ class ReLU(Layer, nn.ReLU):
             else:
                 raise QuantizationBitWidthError(activation_bitwidth)
 
-            layer_def = (f"{self.__class__.__name__}_SQ {var_name}"
-                         f"({input_size}, *(int8_t*){var_name}_input_zero_point, {quantize_property});\n")
+            zero_point_val = int(self.input_quantize.zero_point.item())
+            params_info = [
+                (UINT32_T, "input_size",        str(input_size)),
+                (INT8_T,   "input_zero_point",  str(zero_point_val)),
+                (UINT8_T,  "quantize_property", quantize_property),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.STATIC, for_arduino)
             layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.input_quantize.zero_point, f"{var_name}_input_zero_point"
-            )
-            layer_header += param_header
-            layer_param_def += param_def
 
         return layer_header, layer_def, layer_param_def
 
@@ -147,8 +169,21 @@ class ReLU6(Layer, nn.ReLU6):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)
+    def get_workspace_size(self, input_shape, data_per_byte,
+                           include_locals=False, include_runtime=False, ptr_size=2) -> int:
+        base = math.ceil(input_shape.numel() / data_per_byte)
+        if not (include_locals or include_runtime):
+            return base
+        scheme = None
+        if self.is_quantized:
+            scheme = self.input_quantize.scheme
+        if scheme == QuantizationScheme.STATIC:
+            locals_size  = 7               # uint32_t input_size + int8_t zero_point + int8_t six_point + uint8_t property
+            runtime_size = 4 + 2 * ptr_size  # uint32_t i + 2 fn ptrs
+        else:
+            locals_size  = 4               # uint32_t input_size
+            runtime_size = 4               # uint32_t i
+        return base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0)
 
     def get_output_tensor_shape(self, input_shape):
         return input_shape
@@ -164,7 +199,10 @@ class ReLU6(Layer, nn.ReLU6):
             scheme = self.input_quantize.scheme
 
         if scheme != QuantizationScheme.STATIC:
-            layer_def = f"{self.__class__.__name__} {var_name}({input_size});\n"
+            params_info = [
+                (UINT32_T, "input_size", str(input_size)),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
             layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
         else:
             activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
@@ -177,25 +215,21 @@ class ReLU6(Layer, nn.ReLU6):
             else:
                 raise QuantizationBitWidthError(activation_bitwidth)
 
-            layer_def = (f"{self.__class__.__name__}_SQ {var_name}"
-                         f"({input_size}, *(int8_t*){var_name}_input_zero_point, "
-                         f"*(int8_t*){var_name}_input_six_point, {quantize_property});\n")
-            layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.input_quantize.zero_point, f"{var_name}_input_zero_point")
-            layer_header += param_header
-            layer_param_def += param_def
-
+            zero_point_val = int(self.input_quantize.zero_point.item())
             input_six_point = quantize_per_tensor_assy(
                 torch.Tensor([6]).to(device=self.input_quantize.scale.device),
                 self.input_quantize.scale, self.input_quantize.zero_point,
                 self.input_quantize.bitwidth,
             )
-            param_header, param_def = convert_tensor_to_bytes_var(
-                input_six_point.to(torch.int8), f"{var_name}_input_six_point")
-            layer_header += param_header
-            layer_param_def += param_def
+            six_point_val = int(input_six_point.item())
+            params_info = [
+                (UINT32_T, "input_size",        str(input_size)),
+                (INT8_T,   "input_zero_point",  str(zero_point_val)),
+                (INT8_T,   "input_six_point",   str(six_point_val)),
+                (UINT8_T,  "quantize_property", quantize_property),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.STATIC, for_arduino)
+            layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
 
         return layer_header, layer_def, layer_param_def
 

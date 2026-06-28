@@ -33,6 +33,16 @@ PARAMETER_BITWIDTH_8 = "P8"
 PARAMETER_BITWIDTH_4 = "P4"
 PARAMETER_BITWIDTH_2 = "P2"
 
+# C type strings for get_params_def()
+UINT8_T  = "uint8_t"
+UINT16_T = "uint16_t"
+UINT32_T = "uint32_t"
+INT8_T   = "int8_t"
+INT16_T  = "int16_t"
+INT32_T  = "int32_t"
+FLOAT_T  = "float"
+VOID_PTR = "void*"
+
 
 
 

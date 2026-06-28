@@ -17,6 +17,8 @@ from ..utils import (
     get_size_in_bits,
 
     STATIC_BIAS_BITWDHT,
+    UINT16_T,
+    VOID_PTR,
 )
 
 class Block(Layer, nn.Module):
@@ -203,15 +205,24 @@ class Block(Layer, nn.Module):
         return input_shape
     
 
-    def get_workspace_size(self, input_shape, data_per_byte):
-        output_shape= input_shape
-        max_layer_acitivation_workspace_size = 0
-
+    def get_workspace_size(
+        self, input_shape, data_per_byte,
+        include_locals=False, include_runtime=False, ptr_size=2
+    ) -> int:
+        output_shape = input_shape
+        max_sublayer_size = 0
         for layer in self.layers():
-            workspace_size = layer.get_workspace_size(torch.Size(output_shape), data_per_byte)
-            max_layer_acitivation_workspace_size = max(max_layer_acitivation_workspace_size, workspace_size)
+            size = layer.get_workspace_size(
+                torch.Size(output_shape), data_per_byte, include_locals, include_runtime, ptr_size)
+            max_sublayer_size = max(max_sublayer_size, size)
             output_shape = layer.get_output_tensor_shape(output_shape)
-        return max_layer_acitivation_workspace_size
+        if not (include_locals or include_runtime):
+            return max_sublayer_size
+        # uint16_t num_layers read from buffer
+        block_locals  = 2 if include_locals  else 0
+        # uint16_t i loop counter + Layer* local ptr
+        block_runtime = (2 + ptr_size) if include_runtime else 0
+        return max_sublayer_size + block_locals + block_runtime
 
 
 
@@ -220,33 +231,30 @@ class Block(Layer, nn.Module):
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
         layer_header, layer_def, layer_param_def = "", "", ""
 
-        layers_header = (
-            f"extern Layer* {var_name}_layers[{len(self)}];\n"
-            f"extern {self.__class__.__name__} {var_name};\n\n"
-        )
-    
-        layers_def = (
-            f"{self.__class__.__name__} {var_name}({var_name}_layers, {len(self)});\n"
-            f"Layer* {var_name}_layers[{len(self)}] = {{\n"
-        )
-        
         for layer_name, layer in self.names_layers():
             layer_var_name = f"{var_name}_{layer_name}"
-
-            layers_def += f"    &{layer_var_name},\n"
-            layer_header_, layer_def_, layer_param_def_ = layer.convert_to_c(f"{layer_var_name}", input_shape, for_arduino=for_arduino)
-            input_shape = layer.get_output_tensor_shape(torch.Size(input_shape))  
+            layer_header_, layer_def_, layer_param_def_ = layer.convert_to_c(layer_var_name, input_shape, for_arduino=for_arduino)
+            input_shape = layer.get_output_tensor_shape(torch.Size(input_shape))
 
             layer_header += layer_header_
             layer_def += layer_def_
             layer_param_def += layer_param_def_
 
-        layers_def += "};\n\n"
+        scheme = None
+        if self.is_quantized:
+            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
 
-        layer_def += layers_def
+        params_info = [(UINT16_T, "num_layers", str(len(self)))]
+        for layer_name, _ in self.names_layers():
+            params_info.append((VOID_PTR, layer_name, f"(void*)&{var_name}_{layer_name}"))
 
-        layer_header += layers_header
-        
+        if scheme == QuantizationScheme.STATIC:
+            layer_def += self.get_struct_def(var_name, params_info, QuantizationScheme.STATIC, for_arduino)
+            layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
+        else:
+            layer_def += self.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
+            layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
+
         return layer_header, layer_def, layer_param_def
     
 
