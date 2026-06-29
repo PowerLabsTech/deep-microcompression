@@ -18,7 +18,7 @@ Pipeline Stages Managed by this Container:
 __all__ = [
     "Sequential"
 ]
-import copy, math, random, itertools
+import copy, math, itertools
 import os
 import warnings
 from typing import (
@@ -42,6 +42,7 @@ from ..layers.flatten import Flatten
 from ..layers.linear import Linear
 from ..layers.padding import ConstantPad2d
 from ..layers.pooling import AvgPool2d, MaxPool2d
+from ..utils import get_data_bits
 
 
 from ..compressors import (
@@ -53,6 +54,8 @@ from ..compressors import (
 )
 from ..utils import (
     convert_tensor_to_bytes_var,
+    pad_bits_to_byte,
+
     ACTIVATION_BITWIDTH_2,
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_8,
@@ -1144,19 +1147,15 @@ class Sequential(nn.Sequential):
 
         if isinstance(input_shape, tuple):
             input_shape = torch.Size(input_shape)
+        # data_per_byte = get_data_bits(self)
 
-        data_per_byte = 1
-        if self.is_quantized:
-            scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
-            if scheme == QuantizationScheme.STATIC:
-                activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["activation_bitwidth"]
-                data_per_byte = 8 // activation_bitwidth
-
-        max_layer_workspace_size = 0
+        data_bits = get_data_bits(self)
+        
+        max_layer_workspace_size = pad_bits_to_byte(input_shape.numel() * data_bits)
         output_shape = input_shape
         for layer in self.layers():
             layer_workspace_size = layer.get_workspace_size(
-                torch.Size(output_shape), data_per_byte, include_locals, include_runtime, ptr_size
+                torch.Size(output_shape), include_locals, include_runtime, ptr_size
             )
             output_shape = layer.get_output_tensor_shape(torch.Size(output_shape))
             max_layer_workspace_size = max(max_layer_workspace_size, layer_workspace_size)
@@ -1248,9 +1247,13 @@ class Sequential(nn.Sequential):
             scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
 
         progmem = "PROGMEM " if for_arduino else ""
-        ws = max_layer_acitivation_workspace_size
+        # get_workspace_size() always returns bytes.
+        # The C array is typed (float or int8_t), so WORKSPACE_SIZE must be in
+        # *elements* of that type, not bytes.
+        ws_bytes = max_layer_acitivation_workspace_size
 
         if scheme != QuantizationScheme.STATIC:
+            ws = ws_bytes // 4   # float32: 4 bytes per element
             workspace_type   = FLOAT_T
             class_suffix     = ""
             seq_params_info  = [
@@ -1258,15 +1261,16 @@ class Sequential(nn.Sequential):
                 (UINT8_T,  "layers_len",     str(len(self))),
             ]
         else:
-            activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["activation_bitwidth"]
-            if activation_bitwidth == 8:
+            ws = ws_bytes        # int8_t: 1 byte per element
+            input_activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["input_activation_bitwidth"]
+            if input_activation_bitwidth == 8:
                 quantize_property = ACTIVATION_BITWIDTH_8
-            elif activation_bitwidth == 4:
+            elif input_activation_bitwidth == 4:
                 quantize_property = ACTIVATION_BITWIDTH_4
-            elif activation_bitwidth == 2:
+            elif input_activation_bitwidth == 2:
                 quantize_property = ACTIVATION_BITWIDTH_2
             else:
-                raise QuantizationBitWidthError(activation_bitwidth)
+                raise QuantizationBitWidthError(input_activation_bitwidth)
             workspace_type   = INT8_T
             class_suffix     = "_SQ"
             seq_params_info  = [

@@ -1,3 +1,4 @@
+import math
 from typing import Optional, Iterable, OrderedDict, Tuple, Union
 
 import torch
@@ -8,15 +9,12 @@ from .layer import Layer
 from ..compressors import (
     Quantize,
     QuantizationScheme,
-    QuantizationScaleType,
     QuantizationGranularity,
 )
 
 from ..utils import (
-    convert_tensor_to_bytes_var,
-    get_size_in_bits,
-
-    STATIC_BIAS_BITWDHT,
+    get_data_bits,
+    pad_bits_to_byte,
     UINT16_T,
     VOID_PTR,
 )
@@ -206,11 +204,14 @@ class Block(Layer, nn.Module):
     
 
     def get_workspace_size(
-        self, input_shape, data_per_byte,
-        include_locals=False, include_runtime=False, ptr_size=2
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
     ) -> int:
+        data_per_byte = get_data_bits(self)
         output_shape = input_shape
-        max_sublayer_size = 0
+        data_bits = get_data_bits(self)
+        max_sublayer_size = pad_bits_to_byte(input_shape.numel() * data_bits)
+
         for layer in self.layers():
             size = layer.get_workspace_size(
                 torch.Size(output_shape), data_per_byte, include_locals, include_runtime, ptr_size)
@@ -223,8 +224,6 @@ class Block(Layer, nn.Module):
         # uint16_t i loop counter + Layer* local ptr
         block_runtime = (2 + ptr_size) if include_runtime else 0
         return max_sublayer_size + block_locals + block_runtime
-
-
 
 
     @torch.no_grad()

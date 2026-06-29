@@ -7,7 +7,7 @@ from torch import nn
 from ..utils import (
     quantize_per_tensor_assy,
     get_size_in_bits,
-    convert_tensor_to_bytes_var,
+    pad_bits_to_byte,
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_2,
@@ -18,6 +18,7 @@ from ..utils import (
 )
 
 from .layer import Layer
+from ..utils import get_data_bits
 from ..compressors import (
     Quantize,
     QuantizationScheme,
@@ -74,9 +75,13 @@ class ConstantPad2d(Layer, nn.ConstantPad2d):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte,
-                           include_locals=False, include_runtime=False, ptr_size=2) -> int:
-        base = math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte)
+    def get_workspace_size(
+        self, input_shape, include_locals=False, 
+        include_runtime=False, ptr_size=2
+    ) -> int:
+        data_bits = get_data_bits(self)
+        base = pad_bits_to_byte(self.get_output_tensor_shape(input_shape).numel() * data_bits)
+
         if not (include_locals or include_runtime):
             return base
         scheme = None

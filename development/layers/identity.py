@@ -21,7 +21,7 @@ class Identity(Layer, nn.Identity):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
+    def get_workspace_size(self, input_shape) -> int:
         return 0
 
     def get_size_in_bits(self) -> int:

@@ -128,8 +128,8 @@ class Layer(ABC):
 
     @abstractmethod
     def get_workspace_size(
-        self, input_shape, data_per_byte,
-        include_locals=False, include_runtime=False, ptr_size=2
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
     ) -> int:
         return 0
 

@@ -12,14 +12,13 @@ __all__ = [
     "Linear"
 ]
 
-import math
 from typing import Optional, Tuple, Union
-from functools import partial
 
 import torch
 from torch import nn
 
 from .layer import Layer
+from ..utils import get_data_bits
 from ..compressors import (
     Prune_Channel,
     Quantize,
@@ -33,6 +32,7 @@ from ..compressors import (
 from ..utils import (
     convert_tensor_to_bytes_var,
     get_size_in_bits,
+    pad_bits_to_byte,
 
     STATIC_BIAS_BITWDHT,
 
@@ -318,7 +318,6 @@ class Linear(Layer, nn.Linear):
         return size
 
 
-
     @torch.no_grad()
     def get_compression_parameters(self) -> Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
         """Returns the final hard-pruned and hard-quantized tensors."""
@@ -343,11 +342,17 @@ class Linear(Layer, nn.Linear):
 
 
     def get_workspace_size(
-        self, input_shape, data_per_byte,
-        include_locals=False, include_runtime=False, ptr_size=2
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
     ) -> int:
-        base = (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+        output_data_bits = get_data_bits(self)
+        input_data_bits = get_data_bits(self, current_activation=False)
+
+
+        base = (
+            pad_bits_to_byte(input_shape.numel() * input_data_bits)
+            + pad_bits_to_byte(self.get_output_tensor_shape(input_shape).numel() * output_data_bits)
+        )
         if not (include_locals or include_runtime):
             return base
         scheme = None

@@ -17,11 +17,13 @@ from torch import nn
 from .layer import Layer
 from ..compressors import Quantize, QuantizationScheme, QuantizationBitWidthError
 from ..utils import (
+    get_data_bits,
+    pad_bits_to_byte,
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_2,
     UINT8_T,
-    UINT16_T,
+    UINT16_T
 )
 
 
@@ -126,9 +128,12 @@ class MaxPool2d(Layer, nn.MaxPool2d):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte,
-                           include_locals=False, include_runtime=False, ptr_size=2) -> int:
-        base = math.ceil(input_shape.numel() / data_per_byte)
+    def get_workspace_size(
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
+    ) -> int:
+        data_bits = get_data_bits(self)
+        base = pad_bits_to_byte(input_shape.numel() * data_bits) 
         if not (include_locals or include_runtime):
             return base
         scheme = None
@@ -166,11 +171,15 @@ class AvgPool2d(Layer, nn.AvgPool2d):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte,
-                           include_locals=False, include_runtime=False, ptr_size=2) -> int:
-        base = math.ceil(input_shape.numel() / data_per_byte)
+    def get_workspace_size(
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
+    ) -> int:
+        data_bits = get_data_bits(self)
+        base = pad_bits_to_byte(input_shape.numel() * data_bits)
         if not (include_locals or include_runtime):
             return base
+
         scheme = None
         if self.is_quantized and "quantize" in self.__dict__["_dmc"]:
             scheme = self.__dict__["_dmc"]["quantize"]["scheme"]

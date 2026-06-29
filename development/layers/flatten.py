@@ -22,12 +22,13 @@ from .layer import Layer
 from ..compressors import Quantize, QuantizationScheme, QuantizationBitWidthError
 
 from ..utils import (
+    get_data_bits,
+
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_2,
-
     UINT8_T,
-    UINT32_T,
+    UINT32_T
 )
 
 
@@ -81,10 +82,11 @@ class Flatten(Layer, nn.Flatten):
         pass
 
     def get_workspace_size(
-        self, input_shape, data_per_byte,
-        include_locals=False, include_runtime=False, ptr_size=2
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
     ) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)  # forward is a no-op; 0 extra locals
+        data_bits = get_data_bits(self)
+        return pad_bits_to_byte(input_shape.numel() * data_bits)  # forward is a no-op; 0 extra locals
 
     def get_output_tensor_shape(self, input_shape: torch.Size):
         return torch.Size((input_shape.numel(),))

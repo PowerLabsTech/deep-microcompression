@@ -8,7 +8,8 @@ from torch import nn
 from ..utils import (
     quantize_per_tensor_assy,
     get_size_in_bits,
-    convert_tensor_to_bytes_var,
+    get_data_bits,
+    pad_bits_to_byte,
 
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
@@ -16,7 +17,7 @@ from ..utils import (
 
     UINT8_T,
     UINT32_T,
-    INT8_T,
+    INT8_T
 )
 
 from .layer import Layer
@@ -72,10 +73,11 @@ class ReLU(Layer, nn.ReLU):
         pass
 
     def get_workspace_size(
-        self, input_shape,data_per_byte,
-        include_locals=False, include_runtime=False, ptr_size=2
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
     ) -> int:
-        base = math.ceil(input_shape.numel() / data_per_byte)
+        data_bits = get_data_bits(self)
+        base = pad_bits_to_byte(input_shape.numel() * data_bits)
         if not (include_locals or include_runtime):
             return base
         scheme = None
@@ -169,9 +171,12 @@ class ReLU6(Layer, nn.ReLU6):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte,
-                           include_locals=False, include_runtime=False, ptr_size=2) -> int:
-        base = math.ceil(input_shape.numel() / data_per_byte)
+    def get_workspace_size(
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
+    ) -> int:
+        data_bits = get_data_bits(self)
+        base = pad_bits_to_byte(input_shape.numel() * data_bits)
         if not (include_locals or include_runtime):
             return base
         scheme = None
@@ -263,8 +268,9 @@ class Dropout(Layer, nn.Dropout):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)
+    def get_workspace_size(self, input_shape) -> int:
+        data_bits = get_data_bits(self)
+        return pad_bits_to_byte(input_shape.numel() * data_bits)
 
     def get_output_tensor_shape(self, input_shape):
         return input_shape

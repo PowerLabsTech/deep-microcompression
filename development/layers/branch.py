@@ -23,6 +23,8 @@ from ..compressors import (
 
 from ..utils import (
     get_size_in_bits,
+    get_data_bits,
+    pad_bits_to_byte,
 
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
@@ -284,17 +286,20 @@ class Branch(Layer, nn.Module):
 
 
     def get_workspace_size(
-        self, input_shape, data_per_byte,
-        include_locals=False, include_runtime=False, ptr_size=2
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
     ) -> int:
+        data_bits = get_data_bits(self)
+        input_workspace_size = pad_bits_to_byte(input_shape.numel() * data_bits) * 2
+        
         sublayer1_workspace = self.sublayer1.get_workspace_size(
-            input_shape, data_per_byte, include_locals, include_runtime, ptr_size)
+            input_shape, include_locals, include_runtime, ptr_size)
         if self.sublayer2 is not None:
             sublayer2_workspace = self.sublayer2.get_workspace_size(
-                input_shape, data_per_byte, include_locals, include_runtime, ptr_size
+                input_shape, include_locals, include_runtime, ptr_size
             )
         else:
-            sublayer2_workspace = math.ceil(input_shape.numel() / data_per_byte)
+            sublayer2_workspace = pad_bits_to_byte(input_shape.numel() * data_bits)
         base = sublayer1_workspace + sublayer2_workspace
         if not (include_locals or include_runtime):
             return base
@@ -311,7 +316,7 @@ class Branch(Layer, nn.Module):
             locals_size  = 4
             # 2 Flash ptrs (sublayer1*, sublayer2*) + uint32_t i
             runtime_size = 4 + 2 * ptr_size
-        return base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0)
+        return max(input_workspace_size, base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0))
 
 
     def get_output_tensor_shape(self, input_shape):

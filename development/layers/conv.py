@@ -33,6 +33,8 @@ from ..compressors import (
 from ..utils import (
     convert_tensor_to_bytes_var,
     get_size_in_bits,
+    get_data_bits,
+    pad_bits_to_byte,
 
     STATIC_BIAS_BITWDHT,
 
@@ -376,8 +378,8 @@ class Conv2d(Layer, nn.Conv2d):
         return weight, bias
     
 
-    def get_workspace_debt(self, input_shape):
-        if self.in_channels >= self.out_channels:
+    def get_workspace_debt(self, input_shape, input_bitwidth=1, output_bitwidth=1):
+        if self.in_channels * input_bitwidth  >= self.out_channels * output_bitwidth:
             return 0
 
         C_in, H_p, W_p = self.get_padded_input_tensor_shape(input_shape)
@@ -390,10 +392,10 @@ class Conv2d(Layer, nn.Conv2d):
         def _pair(x): return x if isinstance(x, tuple) else (x, x)
         sH, sW = _pair(self.stride)
 
-        # Paper Theorem 3: D(y,x) = - x*α - y*β
-        alpha = C_in * sW - C_out
-        beta  = W_p * sH * C_in - C_out * W_out
-        D = lambda y, x: - x * alpha - y * beta
+        # Paper Theorem 3: D(y,x) = x*α + y*β
+        alpha = C_out * output_bitwidth - C_in * sW * input_bitwidth
+        beta  = C_out * W_out * output_bitwidth - W_p * sH * C_in * input_bitwidth
+        D = lambda y, x: x * alpha + y * beta
 
         max_D = 0
         for (y, x) in [(0, 0), (0, W_out-1), (H_out-1, 0), (H_out-1, W_out-1)]:
@@ -402,13 +404,17 @@ class Conv2d(Layer, nn.Conv2d):
 
 
     def get_workspace_size(
-        self, input_shape, data_per_byte,
-        include_locals=False, include_runtime=False, ptr_size=2
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
     ) -> int:
+        output_data_bits = get_data_bits(self)
+        input_data_bits = get_data_bits(self, current_activation=False)
+
         output_channel_per_group = self.out_channels // self.groups
-        base = math.ceil(self.get_padded_input_tensor_shape(input_shape).numel() / data_per_byte)
-        base += math.ceil(self.get_workspace_debt(input_shape) / data_per_byte)
-        base += math.ceil(output_channel_per_group / data_per_byte)
+        base = pad_bits_to_byte(self.get_padded_input_tensor_shape(input_shape).numel() * input_data_bits)
+        base += pad_bits_to_byte(self.get_workspace_debt(input_shape, input_data_bits, output_data_bits))
+        base += pad_bits_to_byte(output_channel_per_group * 4) # accumulator scratch pad float or int32_t for static quantization
+
         if not (include_locals or include_runtime):
             return base
         scheme = None
