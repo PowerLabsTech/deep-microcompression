@@ -47,6 +47,10 @@ from ..utils import (
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_8,
 
+    INPUT_ACTIVATION_BITWIDTH_2,
+    INPUT_ACTIVATION_BITWIDTH_4,
+    INPUT_ACTIVATION_BITWIDTH_8,
+
     UINT8_T,
     UINT16_T,
     INT8_T,
@@ -202,7 +206,11 @@ class Linear(Layer, nn.Linear):
         - Bias: 32-bit Symmetric. Scale is constrained to `input_scale * weight_scale`
           to allow efficient integer MAC operations.
         """
-        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
+        super().init_quantize(
+            parameter_bitwidth, granularity, scheme, activation_bitwidth,
+            previous_output_quantize, change_quantization_scale=True
+        )
+        activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
 
         # Weight Quantizer
         if not self.is_pruned_channel:
@@ -254,11 +262,19 @@ class Linear(Layer, nn.Linear):
         return None
 
 
-    def get_quantize_possible_hyperparameters(self):
+    def get_quantize_possible_hyperparameters(self, scheme:QuantizationScheme=QuantizationScheme.STATIC):
+        if scheme == QuantizationScheme.STATIC:
+            return {
+                "parameter_bitwidth": [8, 4, 2],
+                "activation_bitwidth": [8, 4, 2],
+                "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
+            }
         return {
             "parameter_bitwidth": [8, 4, 2],
+            "activation_bitwidth": [8, 4, 2],
             "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
         }
+    
     
     @torch.no_grad()
     def get_size_in_bits(self):  
@@ -484,8 +500,20 @@ class Linear(Layer, nn.Linear):
             granularity = self.__dict__["_dmc"]["quantize"]["granularity"]
             parameter_bitwidth = self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"]
             activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
+            input_activation_bitwidth = self.__dict__["_dmc"]["quantize"]["input_activation_bitwidth"]
 
             quantize_property = ""
+
+            if input_activation_bitwidth == 8:
+                quantize_property += INPUT_ACTIVATION_BITWIDTH_8
+            elif input_activation_bitwidth == 4:
+                quantize_property += INPUT_ACTIVATION_BITWIDTH_4
+            elif input_activation_bitwidth == 2:
+                quantize_property += INPUT_ACTIVATION_BITWIDTH_2
+            else:
+                raise QuantizationBitWidthError(input_activation_bitwidth)
+
+            quantize_property += "_"
 
             if granularity == QuantizationGranularity.PER_TENSOR:
                 quantize_property += PER_TENSOR

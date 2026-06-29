@@ -69,6 +69,7 @@ class Layer(ABC):
         activation_bitwidth=None,
         previous_output_quantize=None,
         current_output_quantize: Optional[Quantize] = None,
+        change_quantization_scale:bool = False
     ):
         """
         Stores quantization config in _dmc and propagates the output quantizer.
@@ -77,12 +78,26 @@ class Layer(ABC):
         previous_output_quantize. Learnable layers (Conv2d, Linear) override this to
         attach weight/input/output quantizers and return a new output quantizer.
         """
+        if activation_bitwidth is None and scheme == QuantizationScheme.STATIC and previous_output_quantize is not None:
+            activation_bitwidth = previous_output_quantize.bitwidth
+
+        if not change_quantization_scale:
+            if previous_output_quantize is not None and activation_bitwidth is not None:
+                assert previous_output_quantize.bitwidth == activation_bitwidth, (
+                    f"Recieved a activition bitwidth different from its input bitwidth for"
+                    f" a none quantization scale changing layer, {self.__class__.__name__}."
+                )
+
         if "quantize" not in self.__dict__["_dmc"]:
             self.__dict__["_dmc"]["quantize"] = dict()
         self.__dict__["_dmc"]["quantize"]["scheme"] = scheme
         self.__dict__["_dmc"]["quantize"]["granularity"] = granularity
         self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"] = parameter_bitwidth
         self.__dict__["_dmc"]["quantize"]["activation_bitwidth"] = activation_bitwidth
+        if previous_output_quantize is not None:
+            self.__dict__["_dmc"]["quantize"]["input_activation_bitwidth"] = previous_output_quantize.bitwidth
+        else:
+            self.__dict__["_dmc"]["quantize"]["input_activation_bitwidth"] = None
 
         if current_output_quantize is None:
             return previous_output_quantize

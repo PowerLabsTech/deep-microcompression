@@ -108,18 +108,18 @@ void Linear_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
     }
 
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
-    int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
+    int8_t (*input_activation_read_packed_intb) (int8_t*, uint32_t);
     int8_t (*parameter_read_packed_intb)  (const int8_t*, uint32_t);
     int8_t (*clamp_intb) (int32_t);
     get_activation_write_packed_intb(quantize_property, &activation_write_packed_intb);
-    get_activation_read_packed_intb(quantize_property,  &activation_read_packed_intb);
+    get_input_activation_read_packed_intb(quantize_property,  &input_activation_read_packed_intb);
     get_parameter_read_packed_intb(quantize_property,   &parameter_read_packed_intb);
     get_activation_clamp_intb(quantize_property,        &clamp_intb);
 
     for (uint16_t j = 0; j < output_size; j++) {
         int32_t output_temp = bias ? parameter_read_int32(bias, j) : 0;
         for (uint16_t i = 0; i < input_size; i++) {
-            output_temp += ((int32_t)activation_read_packed_intb(input, i) - input_zero_point) *
+            output_temp += ((int32_t)input_activation_read_packed_intb(input, i) - input_zero_point) *
                            parameter_read_packed_intb(weight, (j * input_size) + i);
         }
         uint8_t scale_index = get_granularity(quantize_property) == PER_CHANNEL ? j : 0;

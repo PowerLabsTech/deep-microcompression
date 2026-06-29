@@ -591,51 +591,122 @@ class Sequential(nn.Sequential):
             elif configuration_type == "quantize":
                 quantize_config = compression_config.get("quantize")
                 scheme = quantize_config["scheme"]
-                activation_bitwidth = quantize_config["activation_bitwidth"]
-                
-                granularity = quantize_config["granularity"]
-                parameter_bitwidth = quantize_config["parameter_bitwidth"]
+                input_activation_bitwidth  = quantize_config["input_activation_bitwidth"]
+                layer_activation_bitwidth  = quantize_config.get("layer_activation_bitwidth")
+                granularity                = quantize_config["granularity"]
+                layer_parameter_bitwidth   = quantize_config["layer_parameter_bitwidth"]
 
-                if activation_bitwidth is not None and activation_bitwidth > 8:
+                if input_activation_bitwidth is not None and input_activation_bitwidth > 8:
                     if raise_error:
-                        raise ValueError(f"Invalid activation bitwidth, {activation_bitwidth}")
+                        raise ValueError(f"Invalid activation bitwidth, {input_activation_bitwidth}")
                     return False
 
                 # TODO: Confirm if this boolean expression is correct
-                if (scheme == QuantizationScheme.NONE or scheme == QuantizationScheme.DYNAMIC) and activation_bitwidth is not None or \
-                    activation_bitwidth is None and not (scheme == QuantizationScheme.NONE or scheme == QuantizationScheme.DYNAMIC):
+                if (scheme == QuantizationScheme.NONE or scheme == QuantizationScheme.DYNAMIC) and input_activation_bitwidth is not None or \
+                    input_activation_bitwidth is None and not (scheme == QuantizationScheme.NONE or scheme == QuantizationScheme.DYNAMIC):
                     if raise_error:
                         raise ValueError("When quantization scheme is NONE, activation bitwidth has to be None and vice versa.")
                     return False
-                    
+
                 if scheme == QuantizationScheme.NONE: continue
-                
+
+                # ── layer_activation_bitwidth (STATIC only) ────────────────────
+                # Only Conv2d and Linear create new output quantizers; all other
+                # layers propagate the previous quantizer unchanged. The config
+                # accepts either a uniform int or a per-layer dict (nested dicts
+                # allowed for Block/Branch sub-layers). Missing entries default to 8.
+                if scheme == QuantizationScheme.STATIC:
+                    if layer_activation_bitwidth is None:
+                        if raise_error:
+                            raise ValueError("Static quantization requires layer_activation_bitwidth.")
+                        return False
+
+                    def _valid_ab_leaves(d, path):
+                        for k, v in d.items():
+                            full = f"{path}.{k}"
+                            if isinstance(v, dict):
+                                if not _valid_ab_leaves(v, full):
+                                    return False
+                            elif not isinstance(v, int) or v not in [2, 4, 8]:
+                                if raise_error:
+                                    raise TypeError(
+                                        f"Nested layer_activation_bitwidth at '{full}' must be int in "
+                                        f"[2, 4, 8], got {v}."
+                                    )
+                                return False
+                        return True
+
+                    def _layer_has_activation_bitwidth(layer):
+                        hp = layer.get_quantize_possible_hyperparameters()
+                        return hp is not None and "activation_bitwidth" in hp
+
+                    if isinstance(layer_activation_bitwidth, int):
+                        if layer_activation_bitwidth not in [2, 4, 8]:
+                            if raise_error:
+                                raise ValueError(
+                                    f"Invalid layer_activation_bitwidth {layer_activation_bitwidth}; must be in [2, 4, 8]."
+                                )
+                            return False
+                        uniform_ab = layer_activation_bitwidth
+                        layer_activation_bitwidth = {
+                            name: uniform_ab
+                            for name in self.names()
+                            if _layer_has_activation_bitwidth(self[name])
+                        }
+                    elif isinstance(layer_activation_bitwidth, dict):
+                        for layer_name, ab in layer_activation_bitwidth.items():
+                            if layer_name not in self.names():
+                                if raise_error:
+                                    raise NameError(f"Found unknown layer name '{layer_name}' in layer_activation_bitwidth.")
+                                return False
+                            if isinstance(ab, dict):
+                                if not _valid_ab_leaves(ab, layer_name):
+                                    return False
+                            elif not isinstance(ab, int) or ab not in [2, 4, 8]:
+                                if raise_error:
+                                    raise ValueError(
+                                        f"layer_activation_bitwidth for '{layer_name}' must be int in [2, 4, 8], got {ab!r}."
+                                    )
+                                return False
+                        for name in self.names():
+                            if name not in layer_activation_bitwidth and _layer_has_activation_bitwidth(self[name]):
+                                layer_activation_bitwidth[name] = 8
+                    else:
+                        if raise_error:
+                            raise TypeError(
+                                f"layer_activation_bitwidth must be int or dict, got {type(layer_activation_bitwidth)}."
+                            )
+                        return False
+
+                    quantize_config["layer_activation_bitwidth"] = layer_activation_bitwidth
+
+                # ── layer_parameter_bitwidth / granularity ─────────────────────
                 # For uniform quantization
-                if isinstance(parameter_bitwidth, int) and not isinstance(granularity, QuantizationGranularity) or \
-                    isinstance(granularity, QuantizationGranularity) and not isinstance(parameter_bitwidth, int):
+                if isinstance(layer_parameter_bitwidth, int) and not isinstance(granularity, QuantizationGranularity) or \
+                    isinstance(granularity, QuantizationGranularity) and not isinstance(layer_parameter_bitwidth, int):
                     if raise_error:
                         raise ValueError(f"When parameter bitwidth is a single value, granularity has to also be a single value and vice versa.")
                     return False
-                
-                # For non uniform quantization, 
-                if isinstance(parameter_bitwidth, dict) and not isinstance(granularity, dict) or \
-                    isinstance(granularity, dict) and not isinstance(parameter_bitwidth, dict):
+
+                # For non uniform quantization,
+                if isinstance(layer_parameter_bitwidth, dict) and not isinstance(granularity, dict) or \
+                    isinstance(granularity, dict) and not isinstance(layer_parameter_bitwidth, dict):
                     if raise_error:
                         raise ValueError(f"When parameter bitwidth is a dict, granularity has to also be a dict and vice versa.")
                     return False
-                
-                if isinstance(parameter_bitwidth, int):
-                    layer_parameter_bitwidth = parameter_bitwidth
-                    layer_granularity = granularity
-                    parameter_bitwidth = dict()
+
+                if isinstance(layer_parameter_bitwidth, int):
+                    uniform_pb = layer_parameter_bitwidth
+                    uniform_gran = granularity
+                    layer_parameter_bitwidth = dict()
                     granularity = dict()
                     for name in self.names():
-                        parameter_bitwidth[name] = layer_parameter_bitwidth
-                        granularity[name] = layer_granularity
+                        layer_parameter_bitwidth[name] = uniform_pb
+                        granularity[name] = uniform_gran
 
-                elif isinstance(parameter_bitwidth, dict):
-                    assert len(parameter_bitwidth) == len(granularity) and parameter_bitwidth.keys() == granularity.keys(), \
-                            f"the keys of parameter_bitwidth has to match with that of granularity"
+                elif isinstance(layer_parameter_bitwidth, dict):
+                    assert len(layer_parameter_bitwidth) == len(granularity) and layer_parameter_bitwidth.keys() == granularity.keys(), \
+                            f"the keys of layer_parameter_bitwidth has to match with that of granularity"
 
                     def _valid_pb_leaves(d, path):
                         """Recursively validate every leaf is an int in [2, 4, 8]."""
@@ -647,7 +718,7 @@ class Sequential(nn.Sequential):
                             elif not isinstance(v, int) or v not in [2, 4, 8]:
                                 if raise_error:
                                     raise TypeError(
-                                        f"Nested parameter_bitwidth at '{full}' must be int in [2, 4, 8], "
+                                        f"Nested layer_parameter_bitwidth at '{full}' must be int in [2, 4, 8], "
                                         f"got {v!r}."
                                     )
                                 return False
@@ -669,35 +740,35 @@ class Sequential(nn.Sequential):
                                 return False
                         return True
 
-                    for (layer_name, layer_parameter_bitwidth), (_, layer_granularity) in zip(parameter_bitwidth.items(), granularity.items()):
+                    for (layer_name, pb), (_, gran) in zip(layer_parameter_bitwidth.items(), granularity.items()):
                         if layer_name not in self.names():
                             if raise_error:
                                 raise NameError(f"Found unknown layer name {layer_name}")
                             return False
-                        if isinstance(layer_parameter_bitwidth, dict):
-                            if not _valid_pb_leaves(layer_parameter_bitwidth, layer_name):
+                        if isinstance(pb, dict):
+                            if not _valid_pb_leaves(pb, layer_name):
                                 return False
-                            if not _valid_gran_leaves(layer_granularity, layer_name):
+                            if not _valid_gran_leaves(gran, layer_name):
                                 return False
                         else:
-                            if not isinstance(layer_parameter_bitwidth, int):
+                            if not isinstance(pb, int):
                                 if raise_error:
-                                    raise TypeError(f"layer parameter bitwidth has to be of type of int not {type(layer_parameter_bitwidth)} for layer {layer_name}!")
+                                    raise TypeError(f"layer_parameter_bitwidth has to be int not {type(pb)} for layer {layer_name}!")
                                 return False
-                            if not isinstance(layer_granularity, QuantizationGranularity):
+                            if not isinstance(gran, QuantizationGranularity):
                                 if raise_error:
-                                    raise TypeError(f"layer granularity has to be of type QuantizationGranularity not {type(layer_granularity)} for layer {layer_name}!")
+                                    raise TypeError(f"granularity has to be QuantizationGranularity not {type(gran)} for layer {layer_name}!")
                                 return False
-                            if layer_parameter_bitwidth not in [2, 4, 8]:
+                            if pb not in [2, 4, 8]:
                                 if raise_error:
-                                    raise ValueError(f"Received an invalid parameter_bitwidth of {layer_parameter_bitwidth} for layer {layer_name}.")
+                                    raise ValueError(f"Received an invalid layer_parameter_bitwidth of {pb} for layer {layer_name}.")
                                 return False
                     for name in self.names():
-                        if name not in parameter_bitwidth:
-                            parameter_bitwidth[name] = 8
+                        if name not in layer_parameter_bitwidth:
+                            layer_parameter_bitwidth[name] = 8
                             granularity[name] = QuantizationGranularity.PER_TENSOR
 
-                quantize_config["parameter_bitwidth"] = parameter_bitwidth
+                quantize_config["layer_parameter_bitwidth"] = layer_parameter_bitwidth
                 quantize_config["granularity"] = granularity
                 
             else:
@@ -782,18 +853,20 @@ class Sequential(nn.Sequential):
         Defines the valid search space for Quantization.
         """
         if scheme != QuantizationScheme.STATIC:
-            activation_bitwidth = [None]
+            input_activation_bitwidth = [None]
         else:
-            activation_bitwidth = [8, 4, 2]
+            input_activation_bitwidth = [8, 4, 2]
 
         quantize_possible_hypermeters = dict()
         quantize_possible_hypermeters["scheme"] = [scheme]
-        quantize_possible_hypermeters["activation_bitwidth"] = activation_bitwidth
+        quantize_possible_hypermeters["input_activation_bitwidth"] = input_activation_bitwidth
         
         def _expand_quantize_hp(prefix, hp, out):
             if "parameter_bitwidth" in hp:
                 out[f"parameter_bitwidth.{prefix}"] = hp["parameter_bitwidth"]
                 out[f"granularity.{prefix}"] = hp["granularity"]
+            if "activation_bitwidth" in hp:
+                out[f"activation_bitwidth.{prefix}"] = hp["activation_bitwidth"]
             else:
                 for sub_name, sub_hp in hp.items():
                     _expand_quantize_hp(f"{prefix}.{sub_name}", sub_hp, out)
@@ -886,8 +959,9 @@ class Sequential(nn.Sequential):
                               dynamic ranges (min/max) before training/deployment.
         """
         scheme = self.__dict__["_dmc"]["compression_config"]["quantize"]["scheme"]
-        activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["activation_bitwidth"]
-        parameter_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["parameter_bitwidth"]
+        input_activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["input_activation_bitwidth"]
+        layer_activation_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["layer_activation_bitwidth"]
+        layer_parameter_bitwidth = self.__dict__["_dmc"]["compression_config"]["quantize"]["layer_parameter_bitwidth"]
         granularity = self.__dict__["_dmc"]["compression_config"]["quantize"]["granularity"]
 
         if scheme == QuantizationScheme.NONE:
@@ -895,19 +969,19 @@ class Sequential(nn.Sequential):
 
         elif scheme == QuantizationScheme.DYNAMIC:
             for name, layer in self.names_layers():
-                layer.init_quantize(parameter_bitwidth[name], granularity[name], scheme)
+                layer.init_quantize(layer_parameter_bitwidth[name], granularity[name], scheme)
             return
         
         elif scheme == QuantizationScheme.STATIC:
             # We simulate this hardware constraint by placing a Quantize node at the very start of the network.
             setattr(self, "input_quantize", Quantize(
-                self, activation_bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC
+                self, input_activation_bitwidth, scheme, QuantizationGranularity.PER_TENSOR, scale_type=QuantizationScaleType.ASSYMMETRIC
             ))
             previous_output_quantize = self.input_quantize
             for name, layer in self.names_layers():
                 previous_output_quantize = layer.init_quantize(
-                    parameter_bitwidth[name], granularity[name], 
-                    scheme, activation_bitwidth, previous_output_quantize, 
+                    layer_parameter_bitwidth[name], granularity[name], 
+                    scheme, layer_activation_bitwidth.get(name), previous_output_quantize,
                     current_output_quantize=None
                 )
 

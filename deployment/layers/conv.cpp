@@ -241,11 +241,11 @@ void Conv2d_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
     }
 
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
-    int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
+    int8_t (*input_activation_read_packed_intb) (int8_t*, uint32_t);
     int8_t (*parameter_read_packed_intb)  (const int8_t*, uint32_t);
     int8_t (*clamp_intb) (int32_t);
     get_activation_write_packed_intb(quantize_property, &activation_write_packed_intb);
-    get_activation_read_packed_intb(quantize_property,  &activation_read_packed_intb);
+    get_input_activation_read_packed_intb(quantize_property,  &input_activation_read_packed_intb);
     get_parameter_read_packed_intb(quantize_property,   &parameter_read_packed_intb);
     get_activation_clamp_intb(quantize_property,        &clamp_intb);
 
@@ -263,7 +263,7 @@ void Conv2d_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
                         k = g * input_channel_per_group + c_in;
                         for (uint8_t j = 0; j < kernel_row_size; j++) {
                             for (uint8_t i = 0; i < kernel_col_size; i++) {
-                                pixel[c_out] += ((int32_t)activation_read_packed_intb(input,
+                                pixel[c_out] += ((int32_t)input_activation_read_packed_intb(input,
                                     ((j + m * stride_row) * padded_col * input_channel_size) +
                                     ((i + l * stride_col) * input_channel_size) + k
                                 ) - input_zero_point) *

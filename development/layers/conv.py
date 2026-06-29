@@ -46,6 +46,10 @@ from ..utils import (
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_8,
 
+    INPUT_ACTIVATION_BITWIDTH_2,
+    INPUT_ACTIVATION_BITWIDTH_4,
+    INPUT_ACTIVATION_BITWIDTH_8,
+
     UINT8_T,
     UINT16_T,
     INT8_T,
@@ -244,7 +248,12 @@ class Conv2d(Layer, nn.Conv2d):
         2. Inputs/Outputs: Asymmetric (UInt8/Int8) - Required for Static.
         3. Bias: 32-bit Symmetric, scaled by (Input_Scale * Weight_Scale).
         """
-        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
+        super().init_quantize(
+            parameter_bitwidth, granularity, scheme, activation_bitwidth,
+            previous_output_quantize, change_quantization_scale=True
+        )
+        activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
+
         # Weight Quantizer
         if not self.is_pruned_channel:
             setattr(self, "weight_quantize", Quantize(
@@ -293,9 +302,16 @@ class Conv2d(Layer, nn.Conv2d):
             return self.output_quantize 
         return None
 
-    def get_quantize_possible_hyperparameters(self):
+    def get_quantize_possible_hyperparameters(self, scheme:QuantizationScheme=QuantizationScheme.STATIC):
+        if scheme == QuantizationScheme.STATIC:
+            return {
+                "parameter_bitwidth": [8, 4, 2],
+                "activation_bitwidth": [8, 4, 2],
+                "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
+            }
         return {
             "parameter_bitwidth": [8, 4, 2],
+            "activation_bitwidth": [8, 4, 2],
             "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
         }
 
@@ -554,6 +570,7 @@ class Conv2d(Layer, nn.Conv2d):
                 raise QuantizationGranularityError(granularity)
 
             quantize_property += "_"
+
             if parameter_bitwidth == 8:
                 quantize_property += PARAMETER_BITWIDTH_8
             elif parameter_bitwidth == 4:
@@ -599,8 +616,20 @@ class Conv2d(Layer, nn.Conv2d):
             granularity = self.__dict__["_dmc"]["quantize"]["granularity"]
             parameter_bitwidth = self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"]
             activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
+            input_activation_bitwidth = self.__dict__["_dmc"]["quantize"]["input_activation_bitwidth"]
 
             quantize_property = ""
+
+            if input_activation_bitwidth == 8:
+                quantize_property += INPUT_ACTIVATION_BITWIDTH_8
+            elif input_activation_bitwidth == 4:
+                quantize_property += INPUT_ACTIVATION_BITWIDTH_4
+            elif input_activation_bitwidth == 2:
+                quantize_property += INPUT_ACTIVATION_BITWIDTH_2
+            else:
+                raise QuantizationBitWidthError(input_activation_bitwidth)
+
+            quantize_property += "_"
 
             if granularity == QuantizationGranularity.PER_TENSOR:
                 quantize_property += PER_TENSOR

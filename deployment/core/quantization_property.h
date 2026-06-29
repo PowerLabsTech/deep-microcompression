@@ -5,25 +5,28 @@
 // 1. Bitfield Layout (Quantization Property Encoding)
 // ----------------------------------------------------------------------------
 // Layout (LSB → MSB):
-// [ parameter_bitwidth | activation_bitwidth | granularity ]
+// [ parameter_bitwidth | activation_bitwidth | granularity | input_activation_bitwidth ]
 //
 // Bits:
-//   parameter_bitwidth   : bits [1:0]
-//   activation_bitwidth  : bits [3:2]
-//   granularity          : bit  [4]
+//   parameter_bitwidth         : bits [1:0]
+//   activation_bitwidth        : bits [3:2]
+//   granularity                : bit  [4]
+//   (reserved)                 : bit  [5]
+//   input_activation_bitwidth  : bits [7:6]
 //
 // Example:
-//   PER_CHANNEL + ACT=8 + PARAM=4
-//   (1 << 4) | (3 << 2) | (2 << 0)
+//   PER_CHANNEL + IA=8 + ACT=8 + PARAM=4
+//   (3 << 6) | (1 << 4) | (3 << 2) | (2 << 0)
 // ============================================================================
 
 
 // ============================================================================
 // 2. Bit Shifts
 // ============================================================================
-#define PARAMETER_BITWIDTH_SHIFT     0
-#define ACTIVATION_BITWIDTH_SHIFT    2
-#define GRANULARITY_SHIFT            4
+#define PARAMETER_BITWIDTH_SHIFT        0
+#define ACTIVATION_BITWIDTH_SHIFT       2
+#define GRANULARITY_SHIFT               4
+#define INPUT_ACTIVATION_BITWIDTH_SHIFT 6
 
 
 // ============================================================================
@@ -50,14 +53,19 @@
 
 
 // ============================================================================
-// 5. Canonical Quantization Property Constructor
+// 5. Canonical Quantization Property Constructors
 // ----------------------------------------------------------------------------
-// This is the ONLY place where encoding logic lives.
+// QPROP    — no input-activation field (passthrough layers, parameter-only).
+// QPROP_IA — full encoding including input_activation_bitwidth (Conv2d, Linear).
 // ============================================================================
 #define QPROP(granularity, activation_bw, parameter_bw) \
     (((granularity) << GRANULARITY_SHIFT) |             \
      ((activation_bw) << ACTIVATION_BITWIDTH_SHIFT) |   \
      ((parameter_bw) << PARAMETER_BITWIDTH_SHIFT))
+
+#define QPROP_IA(input_activation_bw, granularity, activation_bw, parameter_bw) \
+    (((input_activation_bw) << INPUT_ACTIVATION_BITWIDTH_SHIFT) | \
+     QPROP(granularity, activation_bw, parameter_bw))
 
 
 // ============================================================================
@@ -147,6 +155,85 @@
 #define P2 QPROP(PER_TENSOR, BITWIDTH_1, BITWIDTH_2)
 
 
+// ----------------------------------------------------------------------------
+// Per-Tensor: IA8 input activation
+// ----------------------------------------------------------------------------
+#define IA8_PER_TENSOR_A8_P8  QPROP_IA(BITWIDTH_8, PER_TENSOR, BITWIDTH_8, BITWIDTH_8)
+#define IA8_PER_TENSOR_A8_P4  QPROP_IA(BITWIDTH_8, PER_TENSOR, BITWIDTH_8, BITWIDTH_4)
+#define IA8_PER_TENSOR_A8_P2  QPROP_IA(BITWIDTH_8, PER_TENSOR, BITWIDTH_8, BITWIDTH_2)
+#define IA8_PER_TENSOR_A4_P8  QPROP_IA(BITWIDTH_8, PER_TENSOR, BITWIDTH_4, BITWIDTH_8)
+#define IA8_PER_TENSOR_A4_P4  QPROP_IA(BITWIDTH_8, PER_TENSOR, BITWIDTH_4, BITWIDTH_4)
+#define IA8_PER_TENSOR_A4_P2  QPROP_IA(BITWIDTH_8, PER_TENSOR, BITWIDTH_4, BITWIDTH_2)
+#define IA8_PER_TENSOR_A2_P8  QPROP_IA(BITWIDTH_8, PER_TENSOR, BITWIDTH_2, BITWIDTH_8)
+#define IA8_PER_TENSOR_A2_P4  QPROP_IA(BITWIDTH_8, PER_TENSOR, BITWIDTH_2, BITWIDTH_4)
+#define IA8_PER_TENSOR_A2_P2  QPROP_IA(BITWIDTH_8, PER_TENSOR, BITWIDTH_2, BITWIDTH_2)
+
+// ----------------------------------------------------------------------------
+// Per-Channel: IA8 input activation
+// ----------------------------------------------------------------------------
+#define IA8_PER_CHANNEL_A8_P8 QPROP_IA(BITWIDTH_8, PER_CHANNEL, BITWIDTH_8, BITWIDTH_8)
+#define IA8_PER_CHANNEL_A8_P4 QPROP_IA(BITWIDTH_8, PER_CHANNEL, BITWIDTH_8, BITWIDTH_4)
+#define IA8_PER_CHANNEL_A8_P2 QPROP_IA(BITWIDTH_8, PER_CHANNEL, BITWIDTH_8, BITWIDTH_2)
+#define IA8_PER_CHANNEL_A4_P8 QPROP_IA(BITWIDTH_8, PER_CHANNEL, BITWIDTH_4, BITWIDTH_8)
+#define IA8_PER_CHANNEL_A4_P4 QPROP_IA(BITWIDTH_8, PER_CHANNEL, BITWIDTH_4, BITWIDTH_4)
+#define IA8_PER_CHANNEL_A4_P2 QPROP_IA(BITWIDTH_8, PER_CHANNEL, BITWIDTH_4, BITWIDTH_2)
+#define IA8_PER_CHANNEL_A2_P8 QPROP_IA(BITWIDTH_8, PER_CHANNEL, BITWIDTH_2, BITWIDTH_8)
+#define IA8_PER_CHANNEL_A2_P4 QPROP_IA(BITWIDTH_8, PER_CHANNEL, BITWIDTH_2, BITWIDTH_4)
+#define IA8_PER_CHANNEL_A2_P2 QPROP_IA(BITWIDTH_8, PER_CHANNEL, BITWIDTH_2, BITWIDTH_2)
+
+// ----------------------------------------------------------------------------
+// Per-Tensor: IA4 input activation
+// ----------------------------------------------------------------------------
+#define IA4_PER_TENSOR_A8_P8  QPROP_IA(BITWIDTH_4, PER_TENSOR, BITWIDTH_8, BITWIDTH_8)
+#define IA4_PER_TENSOR_A8_P4  QPROP_IA(BITWIDTH_4, PER_TENSOR, BITWIDTH_8, BITWIDTH_4)
+#define IA4_PER_TENSOR_A8_P2  QPROP_IA(BITWIDTH_4, PER_TENSOR, BITWIDTH_8, BITWIDTH_2)
+#define IA4_PER_TENSOR_A4_P8  QPROP_IA(BITWIDTH_4, PER_TENSOR, BITWIDTH_4, BITWIDTH_8)
+#define IA4_PER_TENSOR_A4_P4  QPROP_IA(BITWIDTH_4, PER_TENSOR, BITWIDTH_4, BITWIDTH_4)
+#define IA4_PER_TENSOR_A4_P2  QPROP_IA(BITWIDTH_4, PER_TENSOR, BITWIDTH_4, BITWIDTH_2)
+#define IA4_PER_TENSOR_A2_P8  QPROP_IA(BITWIDTH_4, PER_TENSOR, BITWIDTH_2, BITWIDTH_8)
+#define IA4_PER_TENSOR_A2_P4  QPROP_IA(BITWIDTH_4, PER_TENSOR, BITWIDTH_2, BITWIDTH_4)
+#define IA4_PER_TENSOR_A2_P2  QPROP_IA(BITWIDTH_4, PER_TENSOR, BITWIDTH_2, BITWIDTH_2)
+
+// ----------------------------------------------------------------------------
+// Per-Channel: IA4 input activation
+// ----------------------------------------------------------------------------
+#define IA4_PER_CHANNEL_A8_P8 QPROP_IA(BITWIDTH_4, PER_CHANNEL, BITWIDTH_8, BITWIDTH_8)
+#define IA4_PER_CHANNEL_A8_P4 QPROP_IA(BITWIDTH_4, PER_CHANNEL, BITWIDTH_8, BITWIDTH_4)
+#define IA4_PER_CHANNEL_A8_P2 QPROP_IA(BITWIDTH_4, PER_CHANNEL, BITWIDTH_8, BITWIDTH_2)
+#define IA4_PER_CHANNEL_A4_P8 QPROP_IA(BITWIDTH_4, PER_CHANNEL, BITWIDTH_4, BITWIDTH_8)
+#define IA4_PER_CHANNEL_A4_P4 QPROP_IA(BITWIDTH_4, PER_CHANNEL, BITWIDTH_4, BITWIDTH_4)
+#define IA4_PER_CHANNEL_A4_P2 QPROP_IA(BITWIDTH_4, PER_CHANNEL, BITWIDTH_4, BITWIDTH_2)
+#define IA4_PER_CHANNEL_A2_P8 QPROP_IA(BITWIDTH_4, PER_CHANNEL, BITWIDTH_2, BITWIDTH_8)
+#define IA4_PER_CHANNEL_A2_P4 QPROP_IA(BITWIDTH_4, PER_CHANNEL, BITWIDTH_2, BITWIDTH_4)
+#define IA4_PER_CHANNEL_A2_P2 QPROP_IA(BITWIDTH_4, PER_CHANNEL, BITWIDTH_2, BITWIDTH_2)
+
+// ----------------------------------------------------------------------------
+// Per-Tensor: IA2 input activation
+// ----------------------------------------------------------------------------
+#define IA2_PER_TENSOR_A8_P8  QPROP_IA(BITWIDTH_2, PER_TENSOR, BITWIDTH_8, BITWIDTH_8)
+#define IA2_PER_TENSOR_A8_P4  QPROP_IA(BITWIDTH_2, PER_TENSOR, BITWIDTH_8, BITWIDTH_4)
+#define IA2_PER_TENSOR_A8_P2  QPROP_IA(BITWIDTH_2, PER_TENSOR, BITWIDTH_8, BITWIDTH_2)
+#define IA2_PER_TENSOR_A4_P8  QPROP_IA(BITWIDTH_2, PER_TENSOR, BITWIDTH_4, BITWIDTH_8)
+#define IA2_PER_TENSOR_A4_P4  QPROP_IA(BITWIDTH_2, PER_TENSOR, BITWIDTH_4, BITWIDTH_4)
+#define IA2_PER_TENSOR_A4_P2  QPROP_IA(BITWIDTH_2, PER_TENSOR, BITWIDTH_4, BITWIDTH_2)
+#define IA2_PER_TENSOR_A2_P8  QPROP_IA(BITWIDTH_2, PER_TENSOR, BITWIDTH_2, BITWIDTH_8)
+#define IA2_PER_TENSOR_A2_P4  QPROP_IA(BITWIDTH_2, PER_TENSOR, BITWIDTH_2, BITWIDTH_4)
+#define IA2_PER_TENSOR_A2_P2  QPROP_IA(BITWIDTH_2, PER_TENSOR, BITWIDTH_2, BITWIDTH_2)
+
+// ----------------------------------------------------------------------------
+// Per-Channel: IA2 input activation
+// ----------------------------------------------------------------------------
+#define IA2_PER_CHANNEL_A8_P8 QPROP_IA(BITWIDTH_2, PER_CHANNEL, BITWIDTH_8, BITWIDTH_8)
+#define IA2_PER_CHANNEL_A8_P4 QPROP_IA(BITWIDTH_2, PER_CHANNEL, BITWIDTH_8, BITWIDTH_4)
+#define IA2_PER_CHANNEL_A8_P2 QPROP_IA(BITWIDTH_2, PER_CHANNEL, BITWIDTH_8, BITWIDTH_2)
+#define IA2_PER_CHANNEL_A4_P8 QPROP_IA(BITWIDTH_2, PER_CHANNEL, BITWIDTH_4, BITWIDTH_8)
+#define IA2_PER_CHANNEL_A4_P4 QPROP_IA(BITWIDTH_2, PER_CHANNEL, BITWIDTH_4, BITWIDTH_4)
+#define IA2_PER_CHANNEL_A4_P2 QPROP_IA(BITWIDTH_2, PER_CHANNEL, BITWIDTH_4, BITWIDTH_2)
+#define IA2_PER_CHANNEL_A2_P8 QPROP_IA(BITWIDTH_2, PER_CHANNEL, BITWIDTH_2, BITWIDTH_8)
+#define IA2_PER_CHANNEL_A2_P4 QPROP_IA(BITWIDTH_2, PER_CHANNEL, BITWIDTH_2, BITWIDTH_4)
+#define IA2_PER_CHANNEL_A2_P2 QPROP_IA(BITWIDTH_2, PER_CHANNEL, BITWIDTH_2, BITWIDTH_2)
+
+
 // ============================================================================
 // 7. Bitfield Extraction Helpers
 // ============================================================================
@@ -159,6 +246,8 @@
 #define GET_ACTIVATION_BITWIDTH(qprop) \
     (((qprop) >> ACTIVATION_BITWIDTH_SHIFT) & 0x3)
 
+#define GET_INPUT_ACTIVATION_BITWIDTH(qprop) \
+    (((qprop) >> INPUT_ACTIVATION_BITWIDTH_SHIFT) & 0x3)
 
 // ============================================================================
 // 8. Semantic Helpers
