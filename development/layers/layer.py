@@ -1,8 +1,9 @@
 import warnings
+import math
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from ..compressors import QuantizationScheme, QuantizationGranularity, Quantize
+from ..compressors import QuantizationScheme, Quantize
 import torch
 
 
@@ -139,10 +140,10 @@ class Layer(ABC):
         pass
 
     def get_size_in_bytes(self):
-        return self.get_size_in_bits() // 8
+        return math.ceil(self.get_size_in_bits() / 8)
 
     def get_size_in_KB(self):
-        return self.get_size_in_bits() / (8 * 1024)
+        return self.get_size_in_bytes() / 1024
 
     @abstractmethod
     def get_output_tensor_shape(self, input_shape):
@@ -157,11 +158,13 @@ class Layer(ABC):
     def get_packed_struct(self, var_name, params_info, for_arduino=False):
         """Generates a named packed Flash struct with no class instantiation."""
         progmem = "PROGMEM " if for_arduino else ""
+        struct_fields = ''.join([f'    {t} {n};\n' for t, n, _ in params_info])
+        struct_values = ', '.join([v for _, _, v in params_info])
         return (
             f"static const struct __attribute__((packed)) {{\n"
-            f"{''.join([f'    {t} {n};\n' for t, n, _ in params_info])}"
+            f"{struct_fields}"
             f"}} {var_name} {progmem}= {{\n"
-            f"    {', '.join([v for _, _, v in params_info])}\n"
+            f"    {struct_values}\n"
             f"}};\n"
         )
 
