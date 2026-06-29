@@ -69,6 +69,7 @@ class Layer(ABC):
         activation_bitwidth=None,
         previous_output_quantize=None,
         current_output_quantize: Optional[Quantize] = None,
+        change_quantization_scale:bool = False
     ):
         """
         Stores quantization config in _dmc and propagates the output quantizer.
@@ -77,12 +78,26 @@ class Layer(ABC):
         previous_output_quantize. Learnable layers (Conv2d, Linear) override this to
         attach weight/input/output quantizers and return a new output quantizer.
         """
+        if activation_bitwidth is None and scheme == QuantizationScheme.STATIC and previous_output_quantize is not None:
+            activation_bitwidth = previous_output_quantize.bitwidth
+
+        if not change_quantization_scale:
+            if previous_output_quantize is not None and activation_bitwidth is not None:
+                assert previous_output_quantize.bitwidth == activation_bitwidth, (
+                    f"Recieved a activition bitwidth different from its input bitwidth for"
+                    f" a none quantization scale changing layer, {self.__class__.__name__}."
+                )
+
         if "quantize" not in self.__dict__["_dmc"]:
             self.__dict__["_dmc"]["quantize"] = dict()
         self.__dict__["_dmc"]["quantize"]["scheme"] = scheme
         self.__dict__["_dmc"]["quantize"]["granularity"] = granularity
         self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"] = parameter_bitwidth
         self.__dict__["_dmc"]["quantize"]["activation_bitwidth"] = activation_bitwidth
+        if previous_output_quantize is not None:
+            self.__dict__["_dmc"]["quantize"]["input_activation_bitwidth"] = previous_output_quantize.bitwidth
+        else:
+            self.__dict__["_dmc"]["quantize"]["input_activation_bitwidth"] = None
 
         if current_output_quantize is None:
             return previous_output_quantize
@@ -112,7 +127,10 @@ class Layer(ABC):
         pass
 
     @abstractmethod
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
+    def get_workspace_size(
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
+    ) -> int:
         return 0
 
     @abstractmethod
@@ -135,3 +153,23 @@ class Layer(ABC):
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
         """Generates C header, definition, and parameter strings for bare-metal deployment."""
         pass
+
+    def get_packed_struct(self, var_name, params_info, for_arduino=False):
+        """Generates a named packed Flash struct with no class instantiation."""
+        progmem = "PROGMEM " if for_arduino else ""
+        return (
+            f"static const struct __attribute__((packed)) {{\n"
+            f"{''.join([f'    {t} {n};\n' for t, n, _ in params_info])}"
+            f"}} {var_name} {progmem}= {{\n"
+            f"    {', '.join([v for _, _, v in params_info])}\n"
+            f"}};\n"
+        )
+
+    def get_struct_def(self, var_name, params_info, quantize_scheme=QuantizationScheme.NONE, for_arduino=False):
+        suffix = "" if quantize_scheme == QuantizationScheme.NONE else \
+                 "_DQ" if quantize_scheme == QuantizationScheme.DYNAMIC else "_SQ"
+        return (
+            self.get_packed_struct(f"{var_name}_buffer", params_info, for_arduino)
+            + f"{self.__class__.__name__}{suffix} {var_name}((uint8_t*)&{var_name}_buffer);\n"
+        )
+    

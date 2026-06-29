@@ -33,6 +33,8 @@ from ..compressors import (
 from ..utils import (
     convert_tensor_to_bytes_var,
     get_size_in_bits,
+    get_data_bits,
+    pad_bits_to_byte,
 
     STATIC_BIAS_BITWDHT,
 
@@ -44,7 +46,17 @@ from ..utils import (
 
     ACTIVATION_BITWIDTH_2,
     ACTIVATION_BITWIDTH_4,
-    ACTIVATION_BITWIDTH_8
+    ACTIVATION_BITWIDTH_8,
+
+    INPUT_ACTIVATION_BITWIDTH_2,
+    INPUT_ACTIVATION_BITWIDTH_4,
+    INPUT_ACTIVATION_BITWIDTH_8,
+
+    UINT8_T,
+    UINT16_T,
+    INT8_T,
+    FLOAT_T,
+    VOID_PTR,
 )
 
 class Conv2d(Layer, nn.Conv2d):
@@ -238,7 +250,12 @@ class Conv2d(Layer, nn.Conv2d):
         2. Inputs/Outputs: Asymmetric (UInt8/Int8) - Required for Static.
         3. Bias: 32-bit Symmetric, scaled by (Input_Scale * Weight_Scale).
         """
-        super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
+        super().init_quantize(
+            parameter_bitwidth, granularity, scheme, activation_bitwidth,
+            previous_output_quantize, change_quantization_scale=True
+        )
+        activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
+
         # Weight Quantizer
         if not self.is_pruned_channel:
             setattr(self, "weight_quantize", Quantize(
@@ -287,9 +304,16 @@ class Conv2d(Layer, nn.Conv2d):
             return self.output_quantize 
         return None
 
-    def get_quantize_possible_hyperparameters(self):
+    def get_quantize_possible_hyperparameters(self, scheme:QuantizationScheme=QuantizationScheme.STATIC):
+        if scheme == QuantizationScheme.STATIC:
+            return {
+                "parameter_bitwidth": [8, 4, 2],
+                "activation_bitwidth": [8, 4, 2],
+                "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
+            }
         return {
             "parameter_bitwidth": [8, 4, 2],
+            "activation_bitwidth": [8, 4, 2],
             "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
         }
 
@@ -354,14 +378,81 @@ class Conv2d(Layer, nn.Conv2d):
         return weight, bias
     
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)\
-            + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte)
+    def get_workspace_debt(self, input_shape, input_bitwidth=1, output_bitwidth=1):
+        if self.in_channels * input_bitwidth  >= self.out_channels * output_bitwidth:
+            return 0
+
+        C_in, H_p, W_p = self.get_padded_input_tensor_shape(input_shape)
+        C_out, H_out, W_out = self.get_output_tensor_shape(input_shape)
+
+        assert C_in == self.in_channels, (
+            "The channel of the input shape does not match in_channels, "
+            f"expected {self.in_channels} but got {C_in}"
+        )
+        def _pair(x): return x if isinstance(x, tuple) else (x, x)
+        sH, sW = _pair(self.stride)
+
+        # Paper Theorem 3: D(y,x) = x*α + y*β
+        alpha = C_out * output_bitwidth - C_in * sW * input_bitwidth
+        beta  = C_out * W_out * output_bitwidth - W_p * sH * C_in * input_bitwidth
+        D = lambda y, x: x * alpha + y * beta
+
+        max_D = 0
+        for (y, x) in [(0, 0), (0, W_out-1), (H_out-1, 0), (H_out-1, W_out-1)]:
+            max_D = max(max_D, D(y, x))
+        return max_D
+
+
+    def get_workspace_size(
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
+    ) -> int:
+        output_data_bits = get_data_bits(self)
+        input_data_bits = get_data_bits(self, current_activation=False)
+
+        output_channel_per_group = self.out_channels // self.groups
+        base = pad_bits_to_byte(self.get_padded_input_tensor_shape(input_shape).numel() * input_data_bits)
+        base += pad_bits_to_byte(self.get_workspace_debt(input_shape, input_data_bits, output_data_bits))
+        base += pad_bits_to_byte(output_channel_per_group * 4) # accumulator scratch pad float or int32_t for static quantization
+
+        if not (include_locals or include_runtime):
+            return base
+        scheme = None
+        if self.is_quantized:
+            scheme = self.weight_quantize.scheme
+        if scheme == QuantizationScheme.STATIC:
+            # 4×u16 + 7×u8 from conv header + f32 output_scale + i8 output_zp + i8 input_zp + u8 property
+            locals_size  = 22
+            # 3 Flash ptrs + 2 workspace alias ptrs + computed(20) + 4 fn ptrs + loops(15) + extras(scale_index u8+val i32=5)
+            runtime_size = 40 + 9 * ptr_size
+        elif scheme == QuantizationScheme.DYNAMIC:
+            # 4×u16 + 7×u8 from conv header + u8 quantize_property
+            locals_size  = 16
+            # 3 Flash ptrs + 2 workspace alias ptrs + computed(12) + 1 fn ptr + loops(15) + scale_index u8
+            runtime_size = 28 + 6 * ptr_size
+        else:
+            # 4×u16 + 7×u8 from conv header
+            locals_size  = 15
+            # 2 Flash ptrs + 2 workspace alias ptrs + computed(12) + loops(15)
+            runtime_size = 27 + 4 * ptr_size
+        return base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0)
+
+
+    def get_padded_input_tensor_shape(self, input_shape) -> torch.Size:
+        """Calculates input shape after padding"""
+        C_in, H_in, W_in = input_shape
+        def _pair(x): return x if isinstance(x, tuple) else (x, x)
+        pH, pW = _pair(self.padding)
+        H_out = H_in + 2 * pH
+        W_out = W_in + 2 * pW
+        
+        return torch.Size((C_in, H_out, W_out))
+    
 
 
     def get_output_tensor_shape(self, input_shape) -> torch.Size:
         """Calculates output shape for memory planning."""
-        C_in, H_in, W_in = input_shape
+        C_in, H_in, W_in = self.get_padded_input_tensor_shape(input_shape)
         
         # Unpack parameters (handle both int and tuple)
         def _pair(x): return x if isinstance(x, tuple) else (x, x)
@@ -371,13 +462,12 @@ class Conv2d(Layer, nn.Conv2d):
             
         sH, sW = _pair(self.stride)
         dH, dW = _pair(self.dilation)
-        pH, pW = _pair(self.padding)
         
-        H_out = ((H_in + 2 * pH - dH * (kH - 1) - 1) // sH) + 1
-        W_out = ((W_in + 2 * pW - dW * (kW - 1) - 1) // sW) + 1
+        H_out = ((H_in - dH * (kH - 1) - 1) // sH) + 1
+        W_out = ((W_in - dW * (kW - 1) - 1) // sW) + 1
         
         return torch.Size((C_out, H_out, W_out))
-    
+
 
     @torch.no_grad()
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
@@ -398,10 +488,14 @@ class Conv2d(Layer, nn.Conv2d):
 
         weight, bias = self.get_compression_parameters()
 
+ 
+        # Reorder from OIHW (PyTorch) to OHWI for HWC activation layout
+        if weight.dim() == 4:
+            weight = weight.permute(0, 2, 3, 1).contiguous()
+
         input_channel_size, input_row_size, input_col_size = input_shape
 
-        output_channel_size, _,\
-        kernel_row_size, kernel_col_size = weight.size()
+        output_channel_size, kernel_row_size, kernel_col_size, _ = weight.size()
         stride_row, stride_col = self.stride
 
         # For dephtwise convolution, so the groups matchs with the input 
@@ -430,7 +524,7 @@ class Conv2d(Layer, nn.Conv2d):
             if self.is_quantized and hasattr(self, "bias_quantize"):
                 bias_bitwidth = self.bias_quantize.bitwidth
             param_header, param_def = convert_tensor_to_bytes_var(
-                bias, 
+                bias,
                 f"{var_name}_bias",
                 bias_bitwidth,
                 for_arduino=for_arduino
@@ -442,21 +536,28 @@ class Conv2d(Layer, nn.Conv2d):
         if self.is_quantized:
             scheme = self.weight_quantize.scheme
 
+        def _pair(x): return x if isinstance(x, tuple) else (x, x)
+        padding_row, padding_col = _pair(self.padding)
+
         if scheme is None or scheme == QuantizationScheme.NONE:
-            if self.bias is not None:
-                layer_def = (
-                    f"{self.__class__.__name__} {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(float*){var_name}_weight, (float*){var_name}_bias);\n"
-                )
-            else:
-                layer_def = (
-                    f"{self.__class__.__name__} {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(float*){var_name}_weight, nullptr);\n"
-                )
+            bias_ptr = f"(void*){var_name}_bias" if self.bias is not None else "nullptr"
+            params_info = [
+                (UINT16_T, "input_channel", str(input_channel_size)),
+                (UINT16_T, "input_row",     str(input_row_size)),
+                (UINT16_T, "input_col",     str(input_col_size)),
+                (UINT16_T, "output_channel", str(output_channel_size)),
+                (UINT8_T,  "kernel_row",    str(kernel_row_size)),
+                (UINT8_T,  "kernel_col",    str(kernel_col_size)),
+                (UINT8_T,  "padding_row",   str(padding_row)),
+                (UINT8_T,  "padding_col",   str(padding_col)),
+                (UINT8_T,  "stride_row",    str(stride_row)),
+                (UINT8_T,  "stride_col",    str(stride_col)),
+                (UINT8_T,  "groups",        str(groups)),
+                (UINT8_T,  "_align",        "0"),
+                (VOID_PTR, "weight",        f"(void*){var_name}_weight"),
+                (VOID_PTR, "bias",          bias_ptr),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
             layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
             
         elif scheme == QuantizationScheme.DYNAMIC:
@@ -464,7 +565,7 @@ class Conv2d(Layer, nn.Conv2d):
             scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
             granularity = self.__dict__["_dmc"]["quantize"]["granularity"]
             parameter_bitwidth = self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"]
-            
+
             quantize_property = ""
 
             if granularity == QuantizationGranularity.PER_TENSOR:
@@ -475,6 +576,7 @@ class Conv2d(Layer, nn.Conv2d):
                 raise QuantizationGranularityError(granularity)
 
             quantize_property += "_"
+
             if parameter_bitwidth == 8:
                 quantize_property += PARAMETER_BITWIDTH_8
             elif parameter_bitwidth == 4:
@@ -484,23 +586,28 @@ class Conv2d(Layer, nn.Conv2d):
             else:
                 raise QuantizationBitWidthError(parameter_bitwidth)
 
-            if self.bias is not None:
-                layer_def = (
-                    f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, (float*){var_name}_bias,  (float*){var_name}_weight_scale, {quantize_property});\n"
-                )
-            else:     
-                layer_def = (
-                    f"{self.__class__.__name__}_DQ {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, nullptr,  (float*){var_name}_weight_scale, {quantize_property});\n"
-                )
+            bias_ptr = f"(void*){var_name}_bias" if self.bias is not None else "nullptr"
+            params_info = [
+                (UINT16_T, "input_channel",    str(input_channel_size)),
+                (UINT16_T, "input_row",        str(input_row_size)),
+                (UINT16_T, "input_col",        str(input_col_size)),
+                (UINT16_T, "output_channel",   str(output_channel_size)),
+                (UINT8_T,  "kernel_row",       str(kernel_row_size)),
+                (UINT8_T,  "kernel_col",       str(kernel_col_size)),
+                (UINT8_T,  "padding_row",      str(padding_row)),
+                (UINT8_T,  "padding_col",      str(padding_col)),
+                (UINT8_T,  "stride_row",       str(stride_row)),
+                (UINT8_T,  "stride_col",       str(stride_col)),
+                (UINT8_T,  "groups",           str(groups)),
+                (UINT8_T,  "_align",           "0"),
+                (VOID_PTR, "weight",           f"(void*){var_name}_weight"),
+                (VOID_PTR, "bias",             bias_ptr),
+                (VOID_PTR, "weight_scale",     f"(void*){var_name}_weight_scale"),
+                (UINT8_T,  "quantize_property", quantize_property),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.DYNAMIC, for_arduino)
             layer_header += f"extern {self.__class__.__name__}_DQ {var_name};\n\n"
-                
-                
+
             param_header, param_def = convert_tensor_to_bytes_var(
                 self.weight_quantize.scale,
                 f"{var_name}_weight_scale",
@@ -510,13 +617,25 @@ class Conv2d(Layer, nn.Conv2d):
             layer_param_def += param_def
 
         elif scheme == QuantizationScheme.STATIC:
-            
+
             scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
             granularity = self.__dict__["_dmc"]["quantize"]["granularity"]
             parameter_bitwidth = self.__dict__["_dmc"]["quantize"]["parameter_bitwidth"]
             activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
+            input_activation_bitwidth = self.__dict__["_dmc"]["quantize"]["input_activation_bitwidth"]
 
             quantize_property = ""
+
+            if input_activation_bitwidth == 8:
+                quantize_property += INPUT_ACTIVATION_BITWIDTH_8
+            elif input_activation_bitwidth == 4:
+                quantize_property += INPUT_ACTIVATION_BITWIDTH_4
+            elif input_activation_bitwidth == 2:
+                quantize_property += INPUT_ACTIVATION_BITWIDTH_2
+            else:
+                raise QuantizationBitWidthError(input_activation_bitwidth)
+
+            quantize_property += "_"
 
             if granularity == QuantizationGranularity.PER_TENSOR:
                 quantize_property += PER_TENSOR
@@ -546,48 +665,34 @@ class Conv2d(Layer, nn.Conv2d):
                 quantize_property += PARAMETER_BITWIDTH_2
             else:
                 raise QuantizationBitWidthError(parameter_bitwidth)
-            
-            if self.bias is not None:
-                layer_def = (
-                    f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, (int32_t*){var_name}_bias, "
-                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
-                )
-            else:
-                layer_def = (
-                    f"{self.__class__.__name__}_SQ {var_name}({input_channel_size}, "
-                    f"{input_row_size}, {input_col_size}, {output_channel_size}, "
-                    f"{kernel_row_size}, {kernel_col_size}, {stride_row}, {stride_col}, {groups}, "
-                    f"(int8_t*){var_name}_weight, nullptr, "
-                    f"*(float*){var_name}_output_scale, *(int8_t*){var_name}_output_zero_point, "
-                    f"*(int8_t*){var_name}_input_zero_point, (float*){var_name}_bias_scale, {quantize_property});\n"
-                )
+
+            output_scale_val      = float(self.output_quantize.scale.item())
+            output_zero_point_val = int(self.output_quantize.zero_point.item())
+            input_zero_point_val  = int(self.input_quantize.zero_point.item())
+            bias_ptr = f"(void*){var_name}_bias" if self.bias is not None else "nullptr"
+            params_info = [
+                (UINT16_T, "input_channel",      str(input_channel_size)),
+                (UINT16_T, "input_row",          str(input_row_size)),
+                (UINT16_T, "input_col",          str(input_col_size)),
+                (UINT16_T, "output_channel",     str(output_channel_size)),
+                (UINT8_T,  "kernel_row",         str(kernel_row_size)),
+                (UINT8_T,  "kernel_col",         str(kernel_col_size)),
+                (UINT8_T,  "padding_row",        str(padding_row)),
+                (UINT8_T,  "padding_col",        str(padding_col)),
+                (UINT8_T,  "stride_row",         str(stride_row)),
+                (UINT8_T,  "stride_col",         str(stride_col)),
+                (UINT8_T,  "groups",             str(groups)),
+                (UINT8_T,  "_align",             "0"),
+                (VOID_PTR, "weight",             f"(void*){var_name}_weight"),
+                (VOID_PTR, "bias",               bias_ptr),
+                (VOID_PTR, "bias_scale",         f"(void*){var_name}_bias_scale"),
+                (FLOAT_T,  "output_scale",       f"{output_scale_val:.9g}f"),
+                (INT8_T,   "output_zero_point", str(output_zero_point_val)),
+                (INT8_T,   "input_zero_point",  str(input_zero_point_val)),
+                (UINT8_T,  "quantize_property",  quantize_property),
+            ]
+            layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.STATIC, for_arduino)
             layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.output_quantize.scale, 
-                f"{var_name}_output_scale"
-            )
-            layer_header += param_header
-            layer_param_def += param_def
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.output_quantize.zero_point, 
-                f"{var_name}_output_zero_point"
-            )
-
-            layer_header += param_header
-            layer_param_def += param_def
-
-            param_header, param_def = convert_tensor_to_bytes_var(
-                self.input_quantize.zero_point, 
-                f"{var_name}_input_zero_point"
-            )
-            layer_header += param_header
-            layer_param_def += param_def
 
             if self.bias is not None:
                 bias_scale = self.bias_quantize.scale

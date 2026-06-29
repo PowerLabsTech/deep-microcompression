@@ -23,14 +23,24 @@ from ..compressors import (
 
 from ..utils import (
     get_size_in_bits,
+    get_data_bits,
+    pad_bits_to_byte,
 
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
-    ACTIVATION_BITWIDTH_2
+    ACTIVATION_BITWIDTH_2,
+
+    UINT8_T,
+    UINT32_T,
+    FLOAT_T,
+    INT8_T,
+    VOID_PTR,
 )
 
 class Branch(Layer, nn.Module):
 
+    # FIXME: This should be non scale modifing layer, another list should be
+    #        create for non output shape modifying layer
     NON_OUTPUT_MODIFYING_LAYERS = (
         AvgPool2d,
         BatchNorm2d,
@@ -53,6 +63,19 @@ class Branch(Layer, nn.Module):
         self.sublayer1 = sublayer1
         self.sublayer2 = sublayer2
 
+        if self.sublayer2 is not None:
+            sublayer1_output_shape = self.sublayer1.get_output_tensor_shape()
+            sublayer2_output_shape = self.sublayer2.get_output_tensor_shape()
+            assert sublayer1_output_shape == sublayer2_output_shape, (
+                f"The output shape of output of sublayer1 {self.sublayer1}: {sublayer1_output_shape}"
+                f" and sublayer2 {self.sublayer2}: {sublayer1_output_shape} aren't the same."
+            )
+        else:
+            assert self.sublayer1 in self.NON_OUTPUT_MODIFYING_LAYERS, (
+                f"If sublayer2 is None, sublayer1 must be a layer that changes the input shape, got {self.sublayer2}"
+            )
+            
+
     def forward(self, input):
 
         output1 = self.sublayer1(input)
@@ -63,7 +86,7 @@ class Branch(Layer, nn.Module):
             output2 = input
 
         assert output1.size() == output2.size(), (
-            f"The output shape of output of submodule1 {output1.size()}"
+            f"The output shape of submodule1 {output1.size()}"
             f" and submodule2 {output2.size()} aren't the same."
         )
 
@@ -192,12 +215,35 @@ class Branch(Layer, nn.Module):
         # branch1/branch2_quantize carry s1/z1 and s2/z2 for the C engine.
         # output_quantize calibrates from the actual post-addition distribution.
         setattr(self, "branch1_quantize", next_output_quantize1)
-        setattr(self, "branch2_quantize", next_output_quantize2)
+        if self.sublayer2 is not None:
+            setattr(self, "branch2_quantize", next_output_quantize2)
+        else:
+            setattr(self, "branch2_quantize", previous_output_quantize)
         setattr(self, "output_quantize", Quantize(
             self, activation_bitwidth, scheme, QuantizationGranularity.PER_TENSOR,
             scale_type=QuantizationScaleType.ASSYMMETRIC
         ))
         return self.output_quantize
+
+    def get_quantization_output_parameters(self):
+        if not self.is_quantized():
+            return
+
+        scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+        if scheme != QuantizationScheme.STATIC:
+            return
+        
+        if hasattr(self, "branch1_quantize") and hasattr(self, "output_quantize"):
+            s1_so = self.branch1_quantize.scale / self.output_quantize.scale
+            s1z1 = self.branch1_quantize.scale * self.branch1_quantize.zero_point
+
+        if hasattr(self, "branch2_quantize") and hasattr(self, "output_quantize"):
+            s2_so = self.branch2_quantize.scale / self.output_quantize.scale
+            s2z2 = self.branch2_quantize.scale * self.branch2_quantize.zero_point
+
+        z_o = int(self.output_quantize.zero_point - ((s1z1 + s2z2) / self.output_quantize.scale))
+        return s1_so, s2_so, round(z_o)
+
 
 
 
@@ -209,6 +255,7 @@ class Branch(Layer, nn.Module):
             if (hp := self.sublayer2.get_prune_channel_possible_hyperparameters()) is not None:
                 result["sublayer2"] = hp
         return result if result else None
+
 
     def get_quantize_possible_hyperparameters(self):
         result = {}
@@ -230,20 +277,46 @@ class Branch(Layer, nn.Module):
         if self.sublayer2 is not None:
             size += self.sublayer2.get_size_in_bits()
         if self.is_compressed and self.is_quantized:
-            if hasattr(self, "branch1_quantize"):
-                size += get_size_in_bits(self.branch1_quantize.scale)
-                size += get_size_in_bits(self.branch1_quantize.zero_point)
-            if hasattr(self, "output_quantize"):
-                size += get_size_in_bits(self.output_quantize.scale)
-                size += get_size_in_bits(self.output_quantize.zero_point)
+            quantization_parameters = self.get_quantization_output_parameters()
+
+            if quantization_parameters is not None:
+                for param in quantization_parameters:
+                    size += get_size_in_bits(param)
         return size
 
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        workspace_size = self.sublayer1.get_workspace_size(input_shape, data_per_byte)
+    def get_workspace_size(
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
+    ) -> int:
+        data_bits = get_data_bits(self)
+        input_workspace_size = pad_bits_to_byte(input_shape.numel() * data_bits) * 2
+        
+        sublayer1_workspace = self.sublayer1.get_workspace_size(
+            input_shape, include_locals, include_runtime, ptr_size)
         if self.sublayer2 is not None:
-            workspace_size += math.ceil(self.sublayer2.get_output_tensor_shape(input_shape).numel() / data_per_byte)
-        return workspace_size
+            sublayer2_workspace = self.sublayer2.get_workspace_size(
+                input_shape, include_locals, include_runtime, ptr_size
+            )
+        else:
+            sublayer2_workspace = pad_bits_to_byte(input_shape.numel() * data_bits)
+        base = sublayer1_workspace + sublayer2_workspace
+        if not (include_locals or include_runtime):
+            return base
+        scheme = None
+        if self.is_quantized:
+            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+        if scheme == QuantizationScheme.STATIC:
+            # uint32_t sublayer1_workspace_size + uint8_t quantize_property
+            locals_size  = 5
+            # 3 Flash ptrs + 1 workspace alias ptr + 3 fn ptrs + uint32_t i + f32 s1_so + f32 s2_so + i8 zo
+            runtime_size = 13 + 7 * ptr_size
+        else:
+            # uint32_t sublayer1_workspace_size
+            locals_size  = 4
+            # 2 Flash ptrs (sublayer1*, sublayer2*) + uint32_t i
+            runtime_size = 4 + 2 * ptr_size
+        return max(input_workspace_size, base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0))
 
 
     def get_output_tensor_shape(self, input_shape):
@@ -267,10 +340,14 @@ class Branch(Layer, nn.Module):
             activation_bitwidth = self.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
 
         if scheme != QuantizationScheme.STATIC:
-            if self.sublayer2 is not None:
-                layer_def += f"{self.__class__.__name__} {var_name}(&{var_name}_sublayer1, &{var_name}_sublayer2);\n"
-            else:
-                layer_def += f"{self.__class__.__name__} {var_name}(&{var_name}_sublayer1, nullptr);\n"
+            sublayer1_ws = self.sublayer1.get_workspace_size(input_shape, 1)
+            sublayer2_ptr = f"(void*)&{var_name}_sublayer2" if self.sublayer2 is not None else "nullptr"
+            params_info = [
+                (VOID_PTR,  "sublayer1",                f"(void*)&{var_name}_sublayer1"),
+                (VOID_PTR,  "sublayer2",                sublayer2_ptr),
+                (UINT32_T,  "sublayer1_workspace_size", str(sublayer1_ws)),
+            ]
+            layer_def += self.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
             layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
         else:
             if activation_bitwidth == 8:
@@ -282,22 +359,36 @@ class Branch(Layer, nn.Module):
             else:
                 raise QuantizationBitWidthError(activation_bitwidth)
 
-            branch1_scale = self.branch1_quantize.scale.item()
-            branch1_zero_point = int(self.branch1_quantize.zero_point.item())
-            branch2_scale = self.branch2_quantize.scale.item()
-            branch2_zero_point = int(self.branch2_quantize.zero_point.item())
-            output_scale = self.output_quantize.scale.item()
-            output_zero_point = int(self.output_quantize.zero_point.item())
+            branch1_scale      = float(self.branch1_quantize.scale.item())
+            branch2_scale      = float(self.branch2_quantize.scale.item())
+            output_scale       = float(self.output_quantize.scale.item())
+            branch1_zero_point = float(self.branch1_quantize.zero_point.item())
+            branch2_zero_point = float(self.branch2_quantize.zero_point.item())
+            output_zero_point  = float(self.output_quantize.zero_point.item())
+            s1_so = branch1_scale / output_scale
+            s2_so = branch2_scale / output_scale
+            s1z1  = branch1_scale * branch1_zero_point
+            s2z2  = branch2_scale * branch2_zero_point
+            z_o   = int(round(output_zero_point - (s1z1 + s2z2) / output_scale))
 
-            sublayer2_ptr = f"&{var_name}_sublayer2" if self.sublayer2 is not None else "nullptr"
-            layer_def += (
-                f"{self.__class__.__name__}_SQ {var_name}("
-                f"&{var_name}_sublayer1, {sublayer2_ptr}, "
-                f"{branch1_scale}f, {branch1_zero_point}, "
-                f"{branch2_scale}f, {branch2_zero_point}, "
-                f"{output_scale}f, {output_zero_point}, "
-                f"{quantize_property});\n"
-            )
+            data_per_byte = 8 // activation_bitwidth
+            sublayer1_ws = self.sublayer1.get_workspace_size(input_shape, data_per_byte)
+
+            sublayer2_ptr = f"(void*)&{var_name}_sublayer2" if self.sublayer2 is not None else "nullptr"
+            qp_params_info = [
+                (FLOAT_T, "s1_so", f"{s1_so:.9g}f"),
+                (FLOAT_T, "s2_so", f"{s2_so:.9g}f"),
+                (INT8_T,  "zo",    str(z_o)),
+            ]
+            layer_def += self.get_packed_struct(f"{var_name}_quantize_params", qp_params_info, for_arduino)
+            params_info = [
+                (VOID_PTR,  "sublayer1",                f"(void*)&{var_name}_sublayer1"),
+                (VOID_PTR,  "sublayer2",                sublayer2_ptr),
+                (UINT32_T,  "sublayer1_workspace_size", str(sublayer1_ws)),
+                (VOID_PTR,  "quantize_parameters",      f"(void*)&{var_name}_quantize_params"),
+                (UINT8_T,   "quantize_property",        quantize_property),
+            ]
+            layer_def += self.get_struct_def(var_name, params_info, QuantizationScheme.STATIC, for_arduino)
             layer_header += f"extern {self.__class__.__name__}_SQ {var_name};\n\n"
 
 

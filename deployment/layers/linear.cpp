@@ -1,175 +1,137 @@
-/**
- * @file linear.cpp
- * @brief Implementation of Linear (fully-connected) layer with support for:
- *       1. Non-quantized models (float)
- *       2. Dynamic quantized models per tensor (float input + quantized weights)
- *       3. Static quantized models per tensor (all quantized)
- */
-
 #include "linear.h"
+#include <string.h>
 
 
-/**
- * @brief Constructor for floating-point Linear layer
- * @param output_size Number of output neurons
- * @param input_size Number of input features
- * @param weight Pointer to weight matrix (row-major, shape [output_size, input_size])
- * @param bias Pointer to bias vector (size [output_size])
- */
-Linear::Linear(uint16_t output_size, uint16_t input_size, 
-              const float* weight, const float* bias) {
-    this->output_size = output_size;
-    this->input_size = input_size;
-    this->weight = weight;
-    this->bias = bias;
-}
+void Linear::forward(float* workspace_start, uint32_t workspace_size) {
+    const uint8_t* p = this->buffer;
+    uint16_t output_size  = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_size   = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    const float* weight   = (const float*)dmc_pgm_read_ptr(p);     p += DMC_PTR_SIZE;
+    const float* bias     = (const float*)dmc_pgm_read_ptr(p);
 
-/**
- * @brief Forward pass for floating-point Linear layer
- * @param input Pointer to input tensor (float)
- * @param output Pointer to output tensor (float)
- * 
- * Computes: output = input * weight^T + bias
- */
-float* Linear::forward(float* input, float* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
+    float* input;
+    float* output;
+    if (input_size > output_size) {
+        input  = workspace_start;
+        output = workspace_start + workspace_size - output_size;
+    } else {
+        input  = workspace_start + workspace_size - input_size;
+        output = workspace_start;
+        memcpy(input, workspace_start, input_size * sizeof(float));
+    }
 
-    float output_temp;
-    for (uint16_t j = 0; j < this->output_size; j++) {
-        output_temp = this->bias ? parameter_read_float(this->bias, j) : 0;
-        // Matrix-vector multiplication
-        for (uint16_t i = 0; i < this->input_size; i++) {
-            output_temp += activation_read_float(input, i) * parameter_read_float(this->weight, (j * this->input_size) + i);
+    for (uint16_t j = 0; j < output_size; j++) {
+        float output_temp = bias ? parameter_read_float(bias, j) : 0.0f;
+        for (uint16_t i = 0; i < input_size; i++) {
+            output_temp += activation_read_float(input, i) * parameter_read_float(weight, (j * input_size) + i);
         }
         activation_write_float(output, j, output_temp);
     }
 
-    return output;
+    if (input_size > output_size)
+        memcpy(workspace_start, output, output_size * sizeof(float));
 }
 
 uint32_t Linear::get_output_size(void) {
-    return this->output_size;
+    return dmc_pgm_read_word((const uint16_t*)this->buffer);
 }
 
-/**
- * @brief Constructor for dynamically quantized Linear layer
- * @param output_size Number of output neurons
- * @param input_size Number of input features
- * @param weight Pointer to quantized weight matrix (int8_t)
- * @param weight_scale Scaling factor for weights
- * @param bias Pointer to floating-point bias vector
- */
-Linear_DQ::Linear_DQ(uint16_t output_size, uint16_t input_size,
-              const int8_t* weight, const float* bias,
-              float* weight_scale, uint8_t quantize_property) {
-    this->output_size = output_size;
-    this->input_size = input_size;
-    this->weight = weight;
-    this->bias = bias;
-    this->weight_scale = weight_scale;
 
-    this->quantize_property = quantize_property;
-}
+void Linear_DQ::forward(float* workspace_start, uint32_t workspace_size) {
+    const uint8_t* p = this->buffer;
+    uint16_t output_size       = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_size        = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    const int8_t* weight       = (const int8_t*)dmc_pgm_read_ptr(p);   p += DMC_PTR_SIZE;
+    const float* bias          = (const float*)dmc_pgm_read_ptr(p);     p += DMC_PTR_SIZE;
+    const float* weight_scale  = (const float*)dmc_pgm_read_ptr(p);     p += DMC_PTR_SIZE;
+    uint8_t quantize_property  = dmc_pgm_read_byte(p);
 
-/**
- * @brief Forward pass for dynamically quantized Linear layer
- * @param input Pointer to floating-point input tensor
- * @param output Pointer to floating-point output tensor
- * 
- * Computes: output = input * dequant(weight)^T + bias
- */
-float* Linear_DQ::forward(float* input, float* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    float* output = input == workspace_start ? workspace_start + workspace_size - this->get_output_size() : workspace_start;
+    float* input;
+    float* output;
+    if (input_size > output_size) {
+        input  = workspace_start;
+        output = workspace_start + workspace_size - output_size;
+    } else {
+        input  = workspace_start + workspace_size - input_size;
+        output = workspace_start;
+        memcpy(input, workspace_start, input_size * sizeof(float));
+    }
 
     int8_t (*parameter_read_packed_intb) (const int8_t*, uint32_t);
-    
-    get_parameter_read_packed_intb(this->quantize_property, &parameter_read_packed_intb);
+    get_parameter_read_packed_intb(quantize_property, &parameter_read_packed_intb);
 
-    float output_temp;
-
-    for (uint16_t j = 0; j < this->output_size; j++) {
-        output_temp = 0;
-        for (uint16_t i = 0; i < this->input_size; i++) {
-            output_temp += activation_read_float(input, i) * parameter_read_packed_intb(this->weight, (j * this->input_size) + i);
+    for (uint16_t j = 0; j < output_size; j++) {
+        float output_temp = 0.0f;
+        for (uint16_t i = 0; i < input_size; i++) {
+            output_temp += activation_read_float(input, i) * parameter_read_packed_intb(weight, (j * input_size) + i);
         }
-        uint8_t scale_index = get_granularity(this->quantize_property) == PER_CHANNEL ? j : 0;
-
-        activation_write_float(output,
-            j,
-            (this->bias ? 
-            (output_temp * parameter_read_float(this->weight_scale, scale_index) + parameter_read_float(this->bias, j)) :
-            (output_temp * parameter_read_float(this->weight_scale, scale_index)))
-        );
+        uint8_t scale_index = get_granularity(quantize_property) == PER_CHANNEL ? j : 0;
+        activation_write_float(output, j,
+            output_temp * parameter_read_float(weight_scale, scale_index) +
+            (bias ? parameter_read_float(bias, j) : 0.0f));
     }
-    return output;
+
+    if (input_size > output_size)
+        memcpy(workspace_start, output, output_size * sizeof(float));
 }
 
 uint32_t Linear_DQ::get_output_size(void) {
-    return this->output_size;
+    return dmc_pgm_read_word((const uint16_t*)this->buffer);
 }
 
-Linear_SQ::Linear_SQ(uint16_t output_size, uint16_t input_size, const int8_t* weight, const int32_t* bias,
-          float output_scale, int8_t output_zero_point, int8_t input_zero_point,  float* bias_scale, uint8_t quantize_property) {
 
-    this->output_size = output_size;
-    this->input_size = input_size;
+void Linear_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
+    const uint8_t* p = this->buffer;
+    uint16_t output_size       = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    uint16_t input_size        = dmc_pgm_read_word((const uint16_t*)p); p += 2;
+    float output_scale         = dmc_pgm_read_float((const float*)p);   p += 4;
+    const int8_t* weight       = (const int8_t*)dmc_pgm_read_ptr(p);    p += DMC_PTR_SIZE;
+    const int32_t* bias        = (const int32_t*)dmc_pgm_read_ptr(p);   p += DMC_PTR_SIZE;
+    const float* bias_scale    = (const float*)dmc_pgm_read_ptr(p);     p += DMC_PTR_SIZE;
+    int8_t output_zero_point   = (int8_t)dmc_pgm_read_byte(p);          p += 1;
+    int8_t input_zero_point    = (int8_t)dmc_pgm_read_byte(p);          p += 1;
+    uint8_t quantize_property = (uint8_t)dmc_pgm_read_byte(p);
 
-    this->weight = weight;
-    this->bias = bias;
+    uint32_t data_per_byte = get_activation_data_per_byte(quantize_property);
+    uint32_t input_bytes   = (uint32_t)ceil((float)input_size  / data_per_byte);
+    uint32_t output_bytes  = (uint32_t)ceil((float)output_size / data_per_byte);
 
-    this->output_scale = output_scale;
-    this->output_zero_point = output_zero_point;
-    this->input_zero_point = input_zero_point;
-    
-    this->bias_scale = bias_scale;
-
-    this->quantize_property = quantize_property;
-}
-
-/**
- * @brief Forward pass for statically quantized Linear layer
- * @param input Pointer to quantized input tensor (int8_t)
- * @param output Pointer to quantized output tensor (int8_t)
- * 
- * Computes quantized output with proper scaling and zero-point adjustments
- */
-int8_t* Linear_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
-    // Getting the output start address with the input size as offset
-    int8_t* output = input == workspace_start ? workspace_start + workspace_size - (uint32_t)ceil((float)this->get_output_size() / get_activation_data_per_byte(this->quantize_property)) : workspace_start;
-
-    int32_t output_temp;
+    int8_t* input;
+    int8_t* output;
+    if (input_size > output_size) {
+        input  = workspace_start;
+        output = workspace_start + workspace_size - output_bytes;
+    } else {
+        input  = workspace_start + workspace_size - input_bytes;
+        output = workspace_start;
+        memcpy(input, workspace_start, input_bytes);
+    }
 
     void (*activation_write_packed_intb) (int8_t*, uint32_t, int8_t);
-    int8_t (*activation_read_packed_intb) (int8_t*, uint32_t);
-    int8_t (*parameter_read_packed_intb) (const int8_t*, uint32_t);
+    int8_t (*input_activation_read_packed_intb) (int8_t*, uint32_t);
+    int8_t (*parameter_read_packed_intb)  (const int8_t*, uint32_t);
     int8_t (*clamp_intb) (int32_t);
-        
-    get_activation_write_packed_intb(this->quantize_property, &activation_write_packed_intb);
-    get_activation_read_packed_intb(this->quantize_property, &activation_read_packed_intb);
-    get_parameter_read_packed_intb(this->quantize_property, &parameter_read_packed_intb);
-    get_activation_clamp_intb(this->quantize_property, &clamp_intb);
+    get_activation_write_packed_intb(quantize_property, &activation_write_packed_intb);
+    get_input_activation_read_packed_intb(quantize_property,  &input_activation_read_packed_intb);
+    get_parameter_read_packed_intb(quantize_property,   &parameter_read_packed_intb);
+    get_activation_clamp_intb(quantize_property,        &clamp_intb);
 
-    for (uint16_t j = 0; j < this->output_size; j++) {
-        output_temp = this->bias ? parameter_read_int32(this->bias, j) : 0;
-
-        for (uint16_t i = 0; i < this->input_size; i++) {
-            output_temp += ((int32_t)activation_read_packed_intb(input, i) - this->input_zero_point) *
-                            parameter_read_packed_intb(this->weight, (j * this->input_size) + i);
+    for (uint16_t j = 0; j < output_size; j++) {
+        int32_t output_temp = bias ? parameter_read_int32(bias, j) : 0;
+        for (uint16_t i = 0; i < input_size; i++) {
+            output_temp += ((int32_t)input_activation_read_packed_intb(input, i) - input_zero_point) *
+                           parameter_read_packed_intb(weight, (j * input_size) + i);
         }
-        uint8_t scale_index = get_granularity(this->quantize_property) == PER_CHANNEL ? j : 0;
-        
-        // Requantize to 8-bit
-        output_temp = roundf(output_temp * parameter_read_float(this->bias_scale, scale_index)/ this->output_scale);
-        output_temp += this->output_zero_point;
-        output_temp = clamp_intb(output_temp);
-        
-        activation_write_packed_intb(output, j, output_temp);
+        uint8_t scale_index = get_granularity(quantize_property) == PER_CHANNEL ? j : 0;
+        int32_t val = roundf(output_temp * parameter_read_float(bias_scale, scale_index) / output_scale);
+        val += output_zero_point;
+        activation_write_packed_intb(output, j, clamp_intb(val));
     }
-    return output;
+
+    if (input_size > output_size)
+        memcpy(workspace_start, output, output_bytes);
 }
 
-uint32_t ::Linear_SQ::get_output_size(void) {
-    return this->output_size;
+uint32_t Linear_SQ::get_output_size(void) {
+    return dmc_pgm_read_word((const uint16_t*)this->buffer);
 }

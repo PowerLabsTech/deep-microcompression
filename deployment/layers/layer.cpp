@@ -7,10 +7,13 @@
 
 #include "layer.h"
 
+Layer::Layer(uint8_t* buffer) {
+    this->buffer = buffer;
+}
 
-float* Layer::forward(float* input, float* workspace_start, uint32_t workspace_size) {
+
+void Layer::forward(float* workspace_start, uint32_t workspace_size) {
     // Intentionally empty - to be implemented by derived classes
-    return nullptr;
 }
 
 
@@ -19,17 +22,12 @@ uint32_t Layer::get_output_size(void) {
 }
 
 
-/**
- * @brief Default forward pass implementation for floating-point layers
- * @param input Pointer to input tensor (float)
- * @param output Pointer to output tensor (float)
- * 
- * @note This base implementation does nothing and should be overridden
- *       by derived layer classes.
- */
-int8_t* Layer_SQ::forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size) {
+Layer_SQ::Layer_SQ(uint8_t* buffer) {
+    this->buffer = buffer;
+}
+
+void Layer_SQ::forward(int8_t* workspace_start, uint32_t workspace_size) {
     // Intentionally empty - to be implemented by derived classes
-    return nullptr;
 }
 
 

@@ -4,34 +4,24 @@
 #include "layer.h"
 
 
-
-
+// Branch buffer layout:
+// [sublayer1: ptr | sublayer2: ptr | sublayer1_workspace_size: uint32_t]
 class Branch : public Layer {
-private:
-    Layer* sublayer1;
-    Layer* sublayer2;
-
 public:
-    Branch(Layer* sublayer1, Layer* sublayer2);
-
-    float* forward(float* input, float* workspace_start, uint32_t workspace_size);
-    
+    using Layer::Layer;
+    void forward(float* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
-
 };
 
 
+// Branch_SQ buffer layout:
+// [sublayer1: ptr | sublayer2: ptr | sublayer1_workspace_size: uint32_t |
+//  quantize_parameters: ptr | quantize_property: uint8_t]
 class Branch_SQ : public Layer_SQ {
-private:
-    Layer_SQ* sublayer1;
-    Layer_SQ* sublayer2;
-
 public:
-    Branch_SQ(Layer_SQ* sublayer1, Layer_SQ* sublayer2, uint8_t quantize_property);
-
-    int8_t* forward(int8_t* input, int8_t* workspace_start, uint32_t workspace_size);
+    using Layer_SQ::Layer_SQ;
+    void forward(int8_t* workspace_start, uint32_t workspace_size);
     uint32_t get_output_size(void);
-
 };
 
 

@@ -17,9 +17,13 @@ from torch import nn
 from .layer import Layer
 from ..compressors import Quantize, QuantizationScheme, QuantizationBitWidthError
 from ..utils import (
+    get_data_bits,
+    pad_bits_to_byte,
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_2,
+    UINT8_T,
+    UINT16_T
 )
 
 
@@ -39,7 +43,7 @@ def _pool_output_shape(input_shape, kernel_size, stride, padding):
     return torch.Size((C, H_out, W_out))
 
 
-def _pool_convert_to_c(layer, var_name, input_shape):
+def _pool_convert_to_c(layer, var_name, input_shape, for_arduino=False):
     """Shared C-code generator for MaxPool2d and AvgPool2d."""
     input_channel_size, input_row_size, input_col_size = input_shape
     kernel_size = layer.kernel_size
@@ -51,11 +55,14 @@ def _pool_convert_to_c(layer, var_name, input_shape):
         scheme = layer.__dict__["_dmc"]["quantize"]["scheme"]
 
     if scheme != QuantizationScheme.STATIC:
-        layer_def = (
-            f"{layer.__class__.__name__} {var_name}("
-            f"{input_channel_size}, {input_row_size}, {input_col_size}, "
-            f"{kernel_size}, {stride}, {padding});\n"
-        )
+        params_info = [
+            (UINT16_T, "input_channel", str(input_channel_size)),
+            (UINT16_T, "input_row",     str(input_row_size)),
+            (UINT16_T, "input_col",     str(input_col_size)),
+            (UINT8_T,  "kernel_size",   str(kernel_size)),
+            (UINT8_T,  "stride",        str(stride)),
+        ]
+        layer_def = layer.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
         layer_header = f"extern {layer.__class__.__name__} {var_name};\n\n"
     else:
         activation_bitwidth = layer.__dict__["_dmc"]["quantize"]["activation_bitwidth"]
@@ -68,14 +75,37 @@ def _pool_convert_to_c(layer, var_name, input_shape):
         else:
             raise QuantizationBitWidthError(activation_bitwidth)
 
-        layer_def = (
-            f"{layer.__class__.__name__}_SQ {var_name}("
-            f"{input_channel_size}, {input_row_size}, {input_col_size}, "
-            f"{kernel_size}, {stride}, {padding}, {quantize_property});\n"
-        )
+        params_info = [
+            (UINT16_T, "input_channel",    str(input_channel_size)),
+            (UINT16_T, "input_row",        str(input_row_size)),
+            (UINT16_T, "input_col",        str(input_col_size)),
+            (UINT8_T,  "kernel_size",      str(kernel_size)),
+            (UINT8_T,  "stride",           str(stride)),
+            (UINT8_T,  "quantize_property", quantize_property),
+        ]
+        layer_def = layer.get_struct_def(var_name, params_info, QuantizationScheme.STATIC, for_arduino)
         layer_header = f"extern {layer.__class__.__name__}_SQ {var_name};\n\n"
 
     return layer_header, layer_def, ""
+
+
+def _pool_workspace_locals(layer, scheme, ptr_size):
+    """Returns (locals_size, runtime_size) for a pooling layer's forward() locals."""
+    if scheme == QuantizationScheme.STATIC:
+        # buffer scalars: 3×u16 + kernel u8 + stride u8 + quantize_property u8
+        locals_size  = 9
+        # computed: output_row u16 + output_col u16 = 4
+        # loops: n u16 + m u16 + l u16 + j u8 + i u8 = 8
+        # 2 fn ptrs + accumulator depends on pool type
+        runtime_size = 14 + 2 * ptr_size  # max pool: temp i8 + input_val i8 = 2
+    else:
+        # buffer scalars: 3×u16 + kernel u8 + stride u8
+        locals_size  = 8
+        # computed: output_row u16 + output_col u16 = 4
+        # loops: n u16 + m u16 + l u16 + j u8 + i u8 = 8
+        # accumulator: temp f32 + input_val f32 = 8  (max pool)
+        runtime_size = 20
+    return locals_size, runtime_size
 
 
 class MaxPool2d(Layer, nn.MaxPool2d):
@@ -98,16 +128,26 @@ class MaxPool2d(Layer, nn.MaxPool2d):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+    def get_workspace_size(
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
+    ) -> int:
+        data_bits = get_data_bits(self)
+        base = pad_bits_to_byte(input_shape.numel() * data_bits) 
+        if not (include_locals or include_runtime):
+            return base
+        scheme = None
+        if self.is_quantized and "quantize" in self.__dict__["_dmc"]:
+            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+        locals_size, runtime_size = _pool_workspace_locals(self, scheme, ptr_size)
+        return base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0)
 
     def get_output_tensor_shape(self, input_shape):
         return _pool_output_shape(input_shape, self.kernel_size, self.stride, self.padding)
 
     @torch.no_grad()
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
-        return _pool_convert_to_c(self, var_name, input_shape)
+        return _pool_convert_to_c(self, var_name, input_shape, for_arduino=for_arduino)
 
 
 class AvgPool2d(Layer, nn.AvgPool2d):
@@ -131,13 +171,32 @@ class AvgPool2d(Layer, nn.AvgPool2d):
     def get_compression_parameters(self):
         pass
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return (math.ceil(input_shape.numel() / data_per_byte)
-                + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte))
+    def get_workspace_size(
+        self, input_shape, include_locals=False,
+        include_runtime=False, ptr_size=2
+    ) -> int:
+        data_bits = get_data_bits(self)
+        base = pad_bits_to_byte(input_shape.numel() * data_bits)
+        if not (include_locals or include_runtime):
+            return base
+
+        scheme = None
+        if self.is_quantized and "quantize" in self.__dict__["_dmc"]:
+            scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
+        # AvgPool differs from MaxPool only in its accumulator: float total vs int16_t total
+        # For STATIC: runtime = 15+2P (vs MaxPool's 14+2P: int16_t total=2 instead of 2×i8=2, same)
+        # For float:  runtime = 17 (computed 5 with pool_size u8, loops 8, accumulator f32 4)
+        if scheme == QuantizationScheme.STATIC:
+            locals_size  = 9
+            runtime_size = 15 + 2 * ptr_size  # pool_size u8 computed + int16_t total
+        else:
+            locals_size  = 8
+            runtime_size = 17                  # pool_size u8 computed + float total
+        return base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0)
 
     def get_output_tensor_shape(self, input_shape):
         return _pool_output_shape(input_shape, self.kernel_size, self.stride, self.padding)
 
     @torch.no_grad()
     def convert_to_c(self, var_name, input_shape, for_arduino=False):
-        return _pool_convert_to_c(self, var_name, input_shape)
+        return _pool_convert_to_c(self, var_name, input_shape, for_arduino=for_arduino)

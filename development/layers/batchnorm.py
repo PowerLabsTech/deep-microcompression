@@ -20,6 +20,10 @@ from ..compressors import Prune_Channel, Quantize, QuantizationScheme
 from ..utils import (
     convert_tensor_to_bytes_var,
     get_size_in_bits,
+    get_data_bits,
+    pad_bits_to_byte,
+    UINT16_T,
+    VOID_PTR,
 )
 
 class BatchNorm2d(Layer, nn.BatchNorm2d):
@@ -152,9 +156,19 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
         return folded_weight, folded_bias
     
 
-    def get_workspace_size(self, input_shape, data_per_byte) -> int:
-        return math.ceil(input_shape.numel() / data_per_byte)\
-            + math.ceil(self.get_output_tensor_shape(input_shape).numel() / data_per_byte)
+    def get_workspace_size(
+        self, input_shape, include_locals=False, 
+        include_runtime=False, ptr_size=2
+    ) -> int:
+        data_bits = get_data_bits(self)
+        base = pad_bits_to_byte(input_shape.numel() * data_bits)
+        if not (include_locals or include_runtime):
+            return base
+        # float only: 3×u16 channel/row/col from buffer
+        locals_size  = 6
+        # 2 Flash ptrs (weight*, bias*) + n u16 + m u16 + l u16 + w f32 + b f32 + idx u32
+        runtime_size = 18 + 2 * ptr_size
+        return base + (locals_size if include_locals else 0) + (runtime_size if include_runtime else 0)
 
 
     def get_output_tensor_shape(self, input_shape):
@@ -191,11 +205,14 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
         layer_header += param_header
         layer_param_def += param_def
 
-        layer_def = (
-            f"{self.__class__.__name__} {var_name}({input_channel_size}, {input_row_size}, {input_col_size}, "
-            f"(float*){var_name}_folded_weight, (float*){var_name}_folded_bias);\n"
-        )
-
+        params_info = [
+            (UINT16_T, "channel_size",  str(input_channel_size)),
+            (UINT16_T, "row_size",      str(int(input_row_size))),
+            (UINT16_T, "col_size",      str(int(input_col_size))),
+            (VOID_PTR, "folded_weight", f"(void*){var_name}_folded_weight"),
+            (VOID_PTR, "folded_bias",   f"(void*){var_name}_folded_bias"),
+        ]
+        layer_def = self.get_struct_def(var_name, params_info, QuantizationScheme.NONE, for_arduino)
         layer_header += f"extern {self.__class__.__name__} {var_name};\n\n"
         
         return layer_header, layer_def, layer_param_def

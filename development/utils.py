@@ -7,11 +7,15 @@ import struct
 import math
 from enum import Enum, auto
 
-from typing import Any, Tuple, Optional
+from typing import Any, Tuple, Optional, Union, TYPE_CHECKING
+if TYPE_CHECKING:
+    from .layers import Layer
+    from .models import Sequential
 
 import torch
 from torch import nn
 
+from .compressors.quantize import QuantizationScheme
 
 # Quantization type constants
 
@@ -25,6 +29,10 @@ INT32_BYTE_PER_LINE = 4
 PER_TENSOR = "PER_TENSOR"
 PER_CHANNEL = "PER_CHANNEL"
 
+INPUT_ACTIVATION_BITWIDTH_8 = "IA8"
+INPUT_ACTIVATION_BITWIDTH_4 = "IA4"
+INPUT_ACTIVATION_BITWIDTH_2 = "IA2"
+
 ACTIVATION_BITWIDTH_8 = "A8"
 ACTIVATION_BITWIDTH_4 = "A4"
 ACTIVATION_BITWIDTH_2 = "A2"
@@ -32,6 +40,16 @@ ACTIVATION_BITWIDTH_2 = "A2"
 PARAMETER_BITWIDTH_8 = "P8"
 PARAMETER_BITWIDTH_4 = "P4"
 PARAMETER_BITWIDTH_2 = "P2"
+
+# C type strings for get_params_def()
+UINT8_T  = "uint8_t"
+UINT16_T = "uint16_t"
+UINT32_T = "uint32_t"
+INT8_T   = "int8_t"
+INT16_T  = "int16_t"
+INT32_T  = "int32_t"
+FLOAT_T  = "float"
+VOID_PTR = "void*"
 
 
 
@@ -405,6 +423,40 @@ def fake_quantize_per_channel_assy(tensor_real: torch.Tensor,
     tensor_quant = quantize_per_channel_assy(tensor_real, scale, zero_point, bitwidth)
     return dequantize_per_channel_assy(tensor_quant, scale, zero_point)
 
+
+def get_data_bits(module, current_activation=True):
+    """
+    Returns the bit-width of a module's current (output) or input activation.
+
+    Works for both Sequential (reads compression_config) and individual Layer
+    instances (reads _dmc["quantize"] set by init_quantize).
+    Returns 32 for unquantized / float modules.
+    """
+    if current_activation:
+        if not module.is_quantized:
+            return 32
+        dmc = module.__dict__["_dmc"]
+        if "quantize" in dmc:
+            # Layer context — activation_bitwidth is the output bitwidth
+            scheme = dmc["quantize"].get("scheme")
+            if scheme == QuantizationScheme.STATIC:
+                ab = dmc["quantize"].get("activation_bitwidth")
+                if ab is not None:
+                    return ab
+        elif "compression_config" in dmc:
+            # Sequential context
+            scheme = dmc["compression_config"]["quantize"]["scheme"]
+            if scheme == QuantizationScheme.STATIC:
+                return dmc["compression_config"]["quantize"]["input_activation_bitwidth"]
+        return 32
+    # Input activation (the previous layer's output bitwidth)
+    assert module.is_quantized, "Module is not quantized — no input activation bitwidth"
+    iab = module.__dict__["_dmc"]["quantize"].get("input_activation_bitwidth")
+    return iab if iab is not None else 32
+
+
+def pad_bits_to_byte(n):
+    return math.ceil(n / 8)
 
 def float32_to_bytes(val: float) -> list:
     """Convert float32 value to bytes (little-endian)
