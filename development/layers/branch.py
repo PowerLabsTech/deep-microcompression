@@ -9,11 +9,13 @@ from .layer import Layer
 
 from .activation import ReLU, ReLU6
 from .batchnorm import BatchNorm2d
+from .block import Block
 from .flatten import Flatten
 from .padding import ConstantPad2d
 from .pooling import AvgPool2d, MaxPool2d
 
 from ..compressors import (
+    get_data_bits,
     Quantize,
     QuantizationScheme,
     QuantizationScaleType,
@@ -23,7 +25,6 @@ from ..compressors import (
 
 from ..utils import (
     get_size_in_bits,
-    get_data_bits,
     pad_bits_to_byte,
 
     ACTIVATION_BITWIDTH_8,
@@ -245,8 +246,6 @@ class Branch(Layer, nn.Module):
         return s1_so, s2_so, round(z_o)
 
 
-
-
     def get_prune_channel_possible_hyperparameters(self):
         result = {}
         if (hp := self.sublayer1.get_prune_channel_possible_hyperparameters()) is not None:
@@ -289,6 +288,7 @@ class Branch(Layer, nn.Module):
         self, input_shape, include_locals=False,
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_bits = get_data_bits(self)
         input_workspace_size = pad_bits_to_byte(input_shape.numel() * data_bits) * 2
         

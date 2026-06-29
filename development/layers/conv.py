@@ -21,6 +21,7 @@ from torch import nn
 
 from .layer import Layer
 from ..compressors import (
+    get_data_bits,
     Prune_Channel,
     Quantize,
     QuantizationScheme,
@@ -33,7 +34,6 @@ from ..compressors import (
 from ..utils import (
     convert_tensor_to_bytes_var,
     get_size_in_bits,
-    get_data_bits,
     pad_bits_to_byte,
 
     STATIC_BIAS_BITWDHT,
@@ -378,7 +378,7 @@ class Conv2d(Layer, nn.Conv2d):
         return weight, bias
     
 
-    def get_workspace_debt(self, input_shape, input_bitwidth=1, output_bitwidth=1):
+    def get_workspace_debt(self, input_shape, input_bitwidth, output_bitwidth):
         if self.in_channels * input_bitwidth  >= self.out_channels * output_bitwidth:
             return 0
 
@@ -407,6 +407,7 @@ class Conv2d(Layer, nn.Conv2d):
         self, input_shape, include_locals=False,
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         output_data_bits = get_data_bits(self)
         input_data_bits = get_data_bits(self, current_activation=False)
 

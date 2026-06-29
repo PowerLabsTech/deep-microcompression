@@ -8,7 +8,6 @@ from torch import nn
 from ..utils import (
     quantize_per_tensor_assy,
     get_size_in_bits,
-    get_data_bits,
     pad_bits_to_byte,
 
     ACTIVATION_BITWIDTH_8,
@@ -22,6 +21,7 @@ from ..utils import (
 
 from .layer import Layer
 from ..compressors import (
+    get_data_bits,
     Quantize,
     QuantizationScheme,
     QuantizationScaleType,
@@ -57,8 +57,6 @@ class ReLU(Layer, nn.ReLU):
         super().init_quantize(parameter_bitwidth, granularity, scheme,
                               activation_bitwidth, previous_output_quantize)
         if scheme == QuantizationScheme.STATIC:
-            assert activation_bitwidth is not None, \
-                "Pass an activation bitwidth when doing static quantization"
             return _attach_input_quantize(
                 self, activation_bitwidth, scheme,
                 previous_output_quantize, current_output_quantize,
@@ -76,6 +74,7 @@ class ReLU(Layer, nn.ReLU):
         self, input_shape, include_locals=False,
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_bits = get_data_bits(self)
         base = pad_bits_to_byte(input_shape.numel() * data_bits)
         if not (include_locals or include_runtime):
@@ -154,8 +153,6 @@ class ReLU6(Layer, nn.ReLU6):
         super().init_quantize(parameter_bitwidth, granularity, scheme,
                               activation_bitwidth, previous_output_quantize)
         if scheme == QuantizationScheme.STATIC:
-            assert activation_bitwidth is not None, \
-                "Pass an activation bitwidth when doing static quantization"
             return _attach_input_quantize(
                 self, activation_bitwidth, scheme,
                 previous_output_quantize, current_output_quantize,
@@ -175,6 +172,7 @@ class ReLU6(Layer, nn.ReLU6):
         self, input_shape, include_locals=False,
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_bits = get_data_bits(self)
         base = pad_bits_to_byte(input_shape.numel() * data_bits)
         if not (include_locals or include_runtime):
@@ -253,8 +251,6 @@ class Dropout(Layer, nn.Dropout):
         super().init_quantize(parameter_bitwidth, granularity, scheme,
                               activation_bitwidth, previous_output_quantize)
         if scheme == QuantizationScheme.STATIC:
-            assert activation_bitwidth is not None, \
-                "Pass an activation bitwidth when doing static quantization"
             return _attach_input_quantize(
                 self, activation_bitwidth, scheme,
                 previous_output_quantize, current_output_quantize,
@@ -269,6 +265,7 @@ class Dropout(Layer, nn.Dropout):
         pass
 
     def get_workspace_size(self, input_shape) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_bits = get_data_bits(self)
         return pad_bits_to_byte(input_shape.numel() * data_bits)
 

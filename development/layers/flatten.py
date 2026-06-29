@@ -19,11 +19,10 @@ import torch
 from torch import nn
 
 from .layer import Layer
-from ..compressors import Quantize, QuantizationScheme, QuantizationBitWidthError
+from ..compressors import QuantizationScheme, QuantizationBitWidthError, get_data_bits
 
 from ..utils import (
-    get_data_bits,
-
+    pad_bits_to_byte,
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
     ACTIVATION_BITWIDTH_2,
@@ -85,6 +84,7 @@ class Flatten(Layer, nn.Flatten):
         self, input_shape, include_locals=False,
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_bits = get_data_bits(self)
         return pad_bits_to_byte(input_shape.numel() * data_bits)  # forward is a no-op; 0 extra locals
 

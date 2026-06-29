@@ -15,12 +15,11 @@ import torch
 from torch import nn
 
 from .layer import Layer
-from ..compressors import Prune_Channel, Quantize, QuantizationScheme
+from ..compressors import Prune_Channel, Quantize, QuantizationScheme, get_data_bits
 
 from ..utils import (
     convert_tensor_to_bytes_var,
     get_size_in_bits,
-    get_data_bits,
     pad_bits_to_byte,
     UINT16_T,
     VOID_PTR,
@@ -160,6 +159,7 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
         self, input_shape, include_locals=False, 
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_bits = get_data_bits(self)
         base = pad_bits_to_byte(input_shape.numel() * data_bits)
         if not (include_locals or include_runtime):

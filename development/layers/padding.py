@@ -5,8 +5,8 @@ import torch
 from torch import nn
 
 from ..utils import (
-    quantize_per_tensor_assy,
     get_size_in_bits,
+    quantize_per_tensor_assy,
     pad_bits_to_byte,
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
@@ -14,12 +14,12 @@ from ..utils import (
     UINT8_T,
     UINT16_T,
     INT8_T,
-    FLOAT_T,
+    FLOAT_T
 )
 
 from .layer import Layer
-from ..utils import get_data_bits
 from ..compressors import (
+    get_data_bits,
     Quantize,
     QuantizationScheme,
     QuantizationScaleType,
@@ -54,8 +54,6 @@ class ConstantPad2d(Layer, nn.ConstantPad2d):
             )
         super().init_quantize(parameter_bitwidth, granularity, scheme,
                               activation_bitwidth, previous_output_quantize)
-        assert activation_bitwidth is not None, \
-            "Pass an activation bitwidth when doing static quantization"
         quantization_base = (current_output_quantize
                              if current_output_quantize is not None
                              else previous_output_quantize)
@@ -79,6 +77,7 @@ class ConstantPad2d(Layer, nn.ConstantPad2d):
         self, input_shape, include_locals=False, 
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_bits = get_data_bits(self)
         base = pad_bits_to_byte(self.get_output_tensor_shape(input_shape).numel() * data_bits)
 

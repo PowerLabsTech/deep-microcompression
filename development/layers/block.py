@@ -7,13 +7,13 @@ from torch._jit_internal import _copy_to_script_wrapper
 
 from .layer import Layer
 from ..compressors import (
+    get_data_bits,
     Quantize,
     QuantizationScheme,
     QuantizationGranularity,
 )
 
 from ..utils import (
-    get_data_bits,
     pad_bits_to_byte,
     UINT16_T,
     VOID_PTR,
@@ -207,6 +207,7 @@ class Block(Layer, nn.Module):
         self, input_shape, include_locals=False,
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_per_byte = get_data_bits(self)
         output_shape = input_shape
         data_bits = get_data_bits(self)

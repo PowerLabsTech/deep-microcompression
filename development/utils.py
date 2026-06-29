@@ -7,15 +7,11 @@ import struct
 import math
 from enum import Enum, auto
 
-from typing import Any, Tuple, Optional, Union, TYPE_CHECKING
-if TYPE_CHECKING:
-    from .layers import Layer
-    from .models import Sequential
+from typing import Any, Tuple, Optional
 
 import torch
 from torch import nn
 
-from .compressors.quantize import QuantizationScheme
 
 # Quantization type constants
 
@@ -422,37 +418,6 @@ def fake_quantize_per_channel_assy(tensor_real: torch.Tensor,
                              ) -> torch.Tensor:
     tensor_quant = quantize_per_channel_assy(tensor_real, scale, zero_point, bitwidth)
     return dequantize_per_channel_assy(tensor_quant, scale, zero_point)
-
-
-def get_data_bits(module, current_activation=True):
-    """
-    Returns the bit-width of a module's current (output) or input activation.
-
-    Works for both Sequential (reads compression_config) and individual Layer
-    instances (reads _dmc["quantize"] set by init_quantize).
-    Returns 32 for unquantized / float modules.
-    """
-    if current_activation:
-        if not module.is_quantized:
-            return 32
-        dmc = module.__dict__["_dmc"]
-        if "quantize" in dmc:
-            # Layer context — activation_bitwidth is the output bitwidth
-            scheme = dmc["quantize"].get("scheme")
-            if scheme == QuantizationScheme.STATIC:
-                ab = dmc["quantize"].get("activation_bitwidth")
-                if ab is not None:
-                    return ab
-        elif "compression_config" in dmc:
-            # Sequential context
-            scheme = dmc["compression_config"]["quantize"]["scheme"]
-            if scheme == QuantizationScheme.STATIC:
-                return dmc["compression_config"]["quantize"]["input_activation_bitwidth"]
-        return 32
-    # Input activation (the previous layer's output bitwidth)
-    assert module.is_quantized, "Module is not quantized — no input activation bitwidth"
-    iab = module.__dict__["_dmc"]["quantize"].get("input_activation_bitwidth")
-    return iab if iab is not None else 32
 
 
 def pad_bits_to_byte(n):

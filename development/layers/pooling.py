@@ -15,9 +15,8 @@ import torch
 from torch import nn
 
 from .layer import Layer
-from ..compressors import Quantize, QuantizationScheme, QuantizationBitWidthError
+from ..compressors import Quantize, QuantizationScheme, QuantizationBitWidthError, get_data_bits
 from ..utils import (
-    get_data_bits,
     pad_bits_to_byte,
     ACTIVATION_BITWIDTH_8,
     ACTIVATION_BITWIDTH_4,
@@ -132,6 +131,7 @@ class MaxPool2d(Layer, nn.MaxPool2d):
         self, input_shape, include_locals=False,
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_bits = get_data_bits(self)
         base = pad_bits_to_byte(input_shape.numel() * data_bits) 
         if not (include_locals or include_runtime):
@@ -175,6 +175,7 @@ class AvgPool2d(Layer, nn.AvgPool2d):
         self, input_shape, include_locals=False,
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         data_bits = get_data_bits(self)
         base = pad_bits_to_byte(input_shape.numel() * data_bits)
         if not (include_locals or include_runtime):

@@ -18,8 +18,8 @@ import torch
 from torch import nn
 
 from .layer import Layer
-from ..utils import get_data_bits
 from ..compressors import (
+    get_data_bits,
     Prune_Channel,
     Quantize,
     QuantizationScheme,
@@ -345,9 +345,9 @@ class Linear(Layer, nn.Linear):
         self, input_shape, include_locals=False,
         include_runtime=False, ptr_size=2
     ) -> int:
+        if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
         output_data_bits = get_data_bits(self)
         input_data_bits = get_data_bits(self, current_activation=False)
-
 
         base = (
             pad_bits_to_byte(input_shape.numel() * input_data_bits)

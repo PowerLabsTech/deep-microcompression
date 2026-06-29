@@ -14,7 +14,7 @@ Key Features:
     for the final "Encode Model Parameters" stage.
 """
 
-from typing import Optional, Iterable, Callable, Tuple
+from typing import Optional, Iterable, Callable, Tuple, Union
 from math import prod
 from enum import Enum, auto
 
@@ -22,7 +22,6 @@ import torch
 
 from .prune_channel import Prune_Channel
 from ..utils import (
-
     get_quantize_scale_sy,
     get_quantize_scale_zero_point_assy,
 
@@ -36,8 +35,6 @@ from ..utils import (
     quantize_per_channel_assy, 
     quantize_per_channel_sy
 )
-
-
 
 class QuantizationScheme(Enum):
     NONE = auto()
@@ -271,3 +268,37 @@ class Quantize:
         return quantize_per_tensor_assy(x, scale, zero_point, self.bitwidth, dtype=dtype) if self.granularity == QuantizationGranularity.PER_TENSOR else \
                quantize_per_channel_assy(x, scale, zero_point, self.bitwidth, dtype=dtype)
     
+
+
+
+def get_data_bits(module:Union["Layer", "Sequential"], current_activation:bool = True):
+    """
+    Returns the bit-width of a module's current (output) or input activation.
+
+    Works for both Sequential (reads compression_config) and individual Layer
+    instances (reads _dmc["quantize"] set by init_quantize).
+    Returns 32 for unquantized / float modules.
+    """
+    if not module.is_quantized:
+        return 32
+    else:
+        dmc = module.__dict__["_dmc"]
+        if "quantize" in dmc:
+            # Layer context — activation_bitwidth is the output bitwidth
+            scheme = dmc["quantize"].get("scheme")
+            if scheme == QuantizationScheme.STATIC:
+                ab = dmc["quantize"].get("activation_bitwidth")
+        elif "compression_config" in dmc:
+            # Sequential context
+            scheme = dmc["compression_config"]["quantize"]["scheme"]
+            if scheme == QuantizationScheme.STATIC:
+                ab = dmc["compression_config"]["quantize"]["input_activation_bitwidth"]
+    if scheme != QuantizationScheme.STATIC:
+        return 32
+    
+    if current_activation:
+        return ab
+    # Input activation (the previous layer's output bitwidth)
+    assert module.is_quantized, "Module is not quantized — no input activation bitwidth"
+    iab = module.__dict__["_dmc"]["quantize"].get("input_activation_bitwidth")
+    return iab if iab is not None else 32
