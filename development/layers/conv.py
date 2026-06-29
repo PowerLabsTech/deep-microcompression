@@ -385,10 +385,6 @@ class Conv2d(Layer, nn.Conv2d):
         C_in, H_p, W_p = self.get_padded_input_tensor_shape(input_shape)
         C_out, H_out, W_out = self.get_output_tensor_shape(input_shape)
 
-        assert C_in == self.in_channels, (
-            "The channel of the input shape does not match in_channels, "
-            f"expected {self.in_channels} but got {C_in}"
-        )
         def _pair(x): return x if isinstance(x, tuple) else (x, x)
         sH, sW = _pair(self.stride)
 
