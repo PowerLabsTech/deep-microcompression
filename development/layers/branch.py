@@ -51,7 +51,7 @@ class Branch(Layer, nn.Module):
         ReLU6,
         MaxPool2d,
     )
-    def __init__(self, sublayer1:Layer, sublayer2:Optional[Layer]=None):
+    def __init__(self, sublayer1:Layer, sublayer2:Optional[Layer]=None, input_shape:Optional[torch.Size] = None):
 
         if (sublayer1 not in self.NON_OUTPUT_MODIFYING_LAYERS and (sublayer2 in self.NON_OUTPUT_MODIFYING_LAYERS or sublayer2 is None)) or \
             sublayer2 not in self.NON_OUTPUT_MODIFYING_LAYERS and sublayer1 in self.NON_OUTPUT_MODIFYING_LAYERS:
@@ -65,16 +65,19 @@ class Branch(Layer, nn.Module):
         self.sublayer2 = sublayer2
 
         if self.sublayer2 is not None:
-            sublayer1_output_shape = self.sublayer1.get_output_tensor_shape()
-            sublayer2_output_shape = self.sublayer2.get_output_tensor_shape()
-            assert sublayer1_output_shape == sublayer2_output_shape, (
-                f"The output shape of output of sublayer1 {self.sublayer1}: {sublayer1_output_shape}"
-                f" and sublayer2 {self.sublayer2}: {sublayer1_output_shape} aren't the same."
-            )
+            if input_shape is not None:
+                sublayer1_output_shape = self.sublayer1.get_output_tensor_shape()
+                sublayer2_output_shape = self.sublayer2.get_output_tensor_shape()
+                assert sublayer1_output_shape == sublayer2_output_shape, (
+                    f"The output shape of output of sublayer1 {self.sublayer1}: {sublayer1_output_shape}"
+                    f" and sublayer2 {self.sublayer2}: {sublayer1_output_shape} aren't the same."
+                )
         else:
-            assert self.sublayer1 in self.NON_OUTPUT_MODIFYING_LAYERS, (
-                f"If sublayer2 is None, sublayer1 must be a layer that changes the input shape, got {self.sublayer2}"
-            )
+            # FIXME: There is no verification that if is a container type layer, that it doesnot change the output shape
+            if not isinstance(self.sublayer1, (Branch, Block)):    
+                assert self.sublayer1 in self.NON_OUTPUT_MODIFYING_LAYERS, (
+                    f"If sublayer2 is None, sublayer1 must be a layer that changes the input shape, got {self.sublayer2}"
+                )
             
 
     def forward(self, input):
