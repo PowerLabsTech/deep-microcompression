@@ -5,7 +5,7 @@ import torch
 from torch import nn
 from torch._jit_internal import _copy_to_script_wrapper
 
-from .layer import Layer, Branch
+from .layer import Layer
 from ..compressors import (
     get_data_bits,
     Quantize,
@@ -199,6 +199,7 @@ class Block(Layer, nn.Module):
         parameter_bitwidth or activation_bitwidth is a per-sublayer dict.  Scalar
         (uniform) arguments are accepted as-is without expansion.
         """
+        from .branch import Branch  # deferred to break the block ↔ branch circular import
         valid_names = set(self.names())
 
         # Validate activation_bitwidth first, since it is independent of parameter_bitwidth and granularity

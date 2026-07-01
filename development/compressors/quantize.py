@@ -106,6 +106,7 @@ class Quantize:
             if base_accumulator is None:
                 if scale_type == QuantizationScaleType.ASSYMMETRIC:
                     def _assy_acc(base):
+                        # For ASYMMETRIC quantization, we only support a single base quantizer.
                         assert len(base) == 1, (
                             "ASSYMMETRIC base_accumulator only supports a single base quantizer; "
                             f"got {len(base)}. Provide a custom base_accumulator for multi-base cases."
@@ -113,13 +114,15 @@ class Quantize:
                         return base[0].scale, base[0].zero_point
                     self.base_accumulator: Callable[[Iterable["Quantize"]], Tuple[torch.Tensor, torch.Tensor]] = _assy_acc
                 else:
-                    self.base_accumulator: Callable[[Iterable["Quantize"]], torch.Tensor] = lambda base: math.prod([b.scale for b in base])
+                    def _sy_acc(base):
+                        return math.prod([b.scale for b in base])
+                    self.base_accumulator: Callable[[Iterable["Quantize"]], torch.Tensor] = _sy_acc
             else:
                 self.base_accumulator = base_accumulator
 
         self.prune_channel = prune_channel
-        self.scale = None
-        self.zero_point = None
+        self._scale = None
+        self._zero_point = None
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -131,9 +134,45 @@ class Quantize:
         if self.module.training:
             self.update_parameters(x)
         return self.fake_apply(x)
+    
+    @property
+    def scale(self) -> torch.Tensor:
+        """
+        Returns the current scale factor(s) for quantization.
+        """
+        if self._scale is None:
+            if self.base is not None:
+                self.update_parameters()
+            else:
+                raise ValueError("Scale has not been initialized. Call update_parameters() first.")
+        if isinstance(self._scale, torch.Tensor):
+            return torch.where(torch.isnan(self._scale), 1., self._scale).to(device=self._scale.device, dtype=self._scale.dtype)
+        return 1.0 if math.isnan(self._scale) else self._scale
+
+
+    @property
+    def zero_point(self) -> torch.Tensor:
+        """
+        Returns the current zero-point(s) for quantization (only relevant for ASYMMETRIC).
+        """
+        if self.scale_type == QuantizationScaleType.SYMMETRIC:
+            raise ValueError("Zero-point is not applicable for SYMMETRIC quantization.")
+        else:
+            if self._zero_point is None:
+                if self.base is not None:
+                    self.update_parameters()
+                else:
+                    raise ValueError("Zero-point has not been initialized. Call update_parameters() first.")
+        if isinstance(self._zero_point, torch.Tensor):
+            if self._zero_point.is_floating_point():
+                return torch.where(torch.isnan(self._zero_point), 0, self._zero_point).to(device=self._zero_point.device, dtype=torch.int8)
+            return self._zero_point.to(device=self._zero_point.device, dtype=torch.int8) 
+            
+        return 0 if math.isnan(self._zero_point) else self._zero_point
+
  
     @torch.no_grad()
-    def update_parameters(self, x: torch.Tensor) -> None:
+    def update_parameters(self, x: Optional[torch.Tensor]=None) -> None:
         """
         Calibration Phase (Observer).
         
@@ -141,6 +180,9 @@ class Quantize:
         Exponential Moving Average (EMA). This ensures the static scale 
         factors are robust to outliers.
         """
+        if x is None and self.base is None:
+            raise ValueError("No input tensor provided for calibration and no base quantizer to inherit from.")
+        
         if self.base is None:
             if self.scale_type == QuantizationScaleType.SYMMETRIC:
                 if self.granularity == QuantizationGranularity.PER_TENSOR:
@@ -168,27 +210,16 @@ class Quantize:
                         self.rmin = self.rmin * (1 -self.avg_exp) + self.avg_exp * x.view(x.size(0), -1).min(dim=1)[0]
 
             if self.scale_type == QuantizationScaleType.SYMMETRIC:
-                self.scale = get_quantize_scale_sy(self.rmax, self.bitwidth)
+                self._scale = get_quantize_scale_sy(self.rmax, self.bitwidth)
             else:
-                self.scale, self.zero_point = get_quantize_scale_zero_point_assy(self.rmax, self.rmin, self.bitwidth)
+                self._scale, self._zero_point = get_quantize_scale_zero_point_assy(self.rmax, self.rmin, self.bitwidth)
         else:
             # Dependent quantizer: inherits scale from the previous layer's output quantizer.
             if self.scale_type == QuantizationScaleType.SYMMETRIC:
-                self.scale = self.base_accumulator(self.base)
+                self._scale = self.base_accumulator(self.base)
             else:
-                self.scale, self.zero_point = self.base_accumulator(self.base)
-        if isinstance(self.scale, torch.Tensor):
-            self.scale = torch.where(torch.isnan(self.scale), 1., self.scale).to(device=self.scale.device, dtype=self.scale.dtype)
-        else:
-            self.scale = 1.0 if math.isnan(self.scale) else self.scale
+                self._scale, self._zero_point = self.base_accumulator(self.base)
 
-        if self.scale_type == QuantizationScaleType.ASSYMMETRIC:
-            if isinstance(self.zero_point, torch.Tensor):
-                if self.zero_point.is_floating_point():
-                    self.zero_point = torch.where(torch.isnan(self.zero_point), 0, self.zero_point).to(device=self.zero_point.device, dtype=self.zero_point.dtype)
-                    self.zero_point = self.zero_point.to(torch.int8)
-            else:
-                self.zero_point = 0 if math.isnan(self.zero_point) else self.zero_point
 
     def fake_apply(self, x: torch.Tensor) -> torch.Tensor:
         """

@@ -245,12 +245,12 @@ class Linear(Layer, nn.Linear):
             if not self.is_pruned_channel:
                 if scheme == QuantizationScheme.STATIC:
                     setattr(self, "bias_quantize", Quantize(
-                        self, STATIC_BIAS_BITWDHT, scheme, granularity, scale_type=QuantizationScaleType.SYMMETRIC, base=[self.weight_quantize, self.input_quantize]
+                        self, STATIC_BIAS_BITWDHT, scheme, granularity, scale_type=QuantizationScaleType.SYMMETRIC, base=[self.weight_quantize, previous_output_quantize]
                     ))
             else:
                 if scheme == QuantizationScheme.STATIC:
                     setattr(self, "bias_quantize", Quantize(
-                        self, STATIC_BIAS_BITWDHT, scheme, granularity, scale_type=QuantizationScaleType.SYMMETRIC, base=[self.weight_quantize, self.input_quantize], prune_channel=self.bias_prune_channel
+                        self, STATIC_BIAS_BITWDHT, scheme, granularity, scale_type=QuantizationScaleType.SYMMETRIC, base=[self.weight_quantize, previous_output_quantize], prune_channel=self.bias_prune_channel
                     ))
 
         # calibration

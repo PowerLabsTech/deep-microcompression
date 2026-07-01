@@ -669,6 +669,3 @@ def evolutionary_search_compression_config(
     
     except IndexError:
         return None, [None, None, None]
-
-                
-        
