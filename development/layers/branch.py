@@ -98,7 +98,6 @@ class Branch(Layer, nn.Module):
 
         if hasattr(self, "output_quantize"):
             output = self.output_quantize(output)
-
         return output
 
 
@@ -179,11 +178,17 @@ class Branch(Layer, nn.Module):
         pb2   = parameter_bitwidth.get("sublayer2", 8) if isinstance(parameter_bitwidth, dict) else parameter_bitwidth
         gran1 = granularity.get("sublayer1", QuantizationGranularity.PER_TENSOR) if isinstance(granularity, dict) else granularity
         gran2 = granularity.get("sublayer2", QuantizationGranularity.PER_TENSOR) if isinstance(granularity, dict) else granularity
+        ab1 = ab2 = abo = None
+        if activation_bitwidth is not None:
+            ab1   = activation_bitwidth.get("sublayer1", 8) if isinstance(activation_bitwidth, dict) else activation_bitwidth
+            ab2   = activation_bitwidth.get("sublayer2", 8) if isinstance(activation_bitwidth, dict) else activation_bitwidth
+            abo   = activation_bitwidth.get("output", 8) if isinstance(activation_bitwidth, dict) else activation_bitwidth
 
         if scheme != QuantizationScheme.STATIC:
-            self.sublayer1.init_quantize(pb1, gran1, scheme, activation_bitwidth, previous_output_quantize)
+            assert activation_bitwidth is None, "activation_bitwidth must be None for non-STATIC quantization"
+            self.sublayer1.init_quantize(pb1, gran1, scheme, None, previous_output_quantize)
             if self.sublayer2 is not None:
-                self.sublayer2.init_quantize(pb2, gran2, scheme, activation_bitwidth, previous_output_quantize)
+                self.sublayer2.init_quantize(pb2, gran2, scheme, None, previous_output_quantize)
             return
 
         assert previous_output_quantize is not None, "Pass a quantizer for the input, it is usually from the preceeding layer."
@@ -202,13 +207,13 @@ class Branch(Layer, nn.Module):
         # needs to be forced to a particular scale — each finds its own optimal range during QAT.
 
         next_output_quantize1 = self.sublayer1.init_quantize(
-            pb1, gran1, scheme, activation_bitwidth,
+            pb1, gran1, scheme, ab1,
             previous_output_quantize, current_output_quantize=None
         )
 
         if self.sublayer2 is not None:
             next_output_quantize2 = self.sublayer2.init_quantize(
-                pb2, gran2, scheme, activation_bitwidth,
+                pb2, gran2, scheme, ab2,
                 previous_output_quantize, current_output_quantize=None
             )
         else:
@@ -224,13 +229,13 @@ class Branch(Layer, nn.Module):
         else:
             setattr(self, "branch2_quantize", previous_output_quantize)
         setattr(self, "output_quantize", Quantize(
-            self, activation_bitwidth, scheme, QuantizationGranularity.PER_TENSOR,
+            self, abo, scheme, QuantizationGranularity.PER_TENSOR,
             scale_type=QuantizationScaleType.ASSYMMETRIC
         ))
         return self.output_quantize
 
     def get_quantization_output_parameters(self):
-        if not self.is_quantized():
+        if not self.is_quantized:
             return
 
         scheme = self.__dict__["_dmc"]["quantize"]["scheme"]
@@ -266,8 +271,158 @@ class Branch(Layer, nn.Module):
         if self.sublayer2 is not None:
             if (hp := self.sublayer2.get_quantize_possible_hyperparameters()) is not None:
                 result["sublayer2"] = hp
+        result["output"] = {"activation_bitwidth" : [8, 4, 2]}
         return result if result else None
 
+
+    def is_quantize_config_valid(
+        self,
+        parameter_bitwidth,
+        granularity,
+        activation_bitwidth,
+        raise_error: bool = True,
+    ) -> bool:
+        """
+        Validates and fills per-sublayer quantization config dicts in-place.
+
+        Valid activation_bitwidth keys: sublayer1, sublayer2 (if present), output.
+        Valid parameter_bitwidth keys:  sublayer1, sublayer2 (if present).
+        Scalar (uniform) arguments are accepted as-is without expansion.
+        """
+        valid_pb_keys = {"sublayer1", "sublayer2"} if self.sublayer2 is not None else {"sublayer1"}
+        valid_ab_keys = valid_pb_keys | {"output"}
+
+        def _sublayer(key):
+            return self.sublayer1 if key == "sublayer1" else self.sublayer2
+
+        # Validate activation_bitwidth first, since it is independent of parameter_bitwidth and granularity
+        if isinstance(activation_bitwidth, dict):
+            for key in activation_bitwidth:
+                if key not in valid_ab_keys:
+                    if raise_error:
+                        raise NameError(
+                            f"Unknown key '{key}' in activation_bitwidth for Branch; "
+                            f"valid keys: {sorted(valid_ab_keys)}"
+                        )
+                    return False
+            for key, ab in activation_bitwidth.items():
+                if key == "output":
+                    if not isinstance(ab, int) or ab not in [2, 4, 8]:
+                        if raise_error:
+                            raise ValueError(
+                                f"Branch activation_bitwidth['output'] must be int in [2, 4, 8], got {ab!r}"
+                            )
+                        return False
+                else:
+                    if isinstance(ab, dict):
+                        if not isinstance(_sublayer(key), (Block, Branch)):
+                            if raise_error:
+                                raise TypeError(
+                                    f"Branch activation_bitwidth['{key}'] is a dict but '{key}' is not a container layer"
+                                )
+                            return False
+                    elif not isinstance(ab, int) or ab not in [2, 4, 8]:
+                        if raise_error:
+                            raise ValueError(
+                                f"Branch activation_bitwidth['{key}'] must be int in [2, 4, 8], got {ab!r}"
+                            )
+                        return False
+            for key in valid_ab_keys:
+                if key not in activation_bitwidth:
+                    activation_bitwidth[key] = 8
+
+        # parameter_bitwidth and granularity are always paired — validate them together
+        if (isinstance(parameter_bitwidth, int) and not isinstance(granularity, QuantizationGranularity)) or \
+           (isinstance(granularity, QuantizationGranularity) and not isinstance(parameter_bitwidth, int)):
+            if raise_error:
+                raise ValueError("Branch: parameter_bitwidth and granularity must both be scalars or both be dicts.")
+            return False
+
+        if (isinstance(parameter_bitwidth, dict) and not isinstance(granularity, dict)) or \
+           (isinstance(granularity, dict) and not isinstance(parameter_bitwidth, dict)):
+            if raise_error:
+                raise ValueError("Branch: parameter_bitwidth and granularity must both be dicts or both be scalars.")
+            return False
+
+        if isinstance(parameter_bitwidth, dict):
+            if parameter_bitwidth.keys() != granularity.keys():
+                if raise_error:
+                    raise ValueError("Branch: parameter_bitwidth and granularity dicts must have the same keys.")
+                return False
+
+            for (key, pb), (_, gran) in zip(parameter_bitwidth.items(), granularity.items()):
+                if key not in valid_pb_keys:
+                    if raise_error:
+                        raise NameError(
+                            f"Unknown key '{key}' in parameter_bitwidth for Branch; "
+                            f"valid keys: {sorted(valid_pb_keys)}"
+                        )
+                    return False
+                if isinstance(pb, dict):
+                    if not isinstance(_sublayer(key), (Block, Branch)):
+                        if raise_error:
+                            raise TypeError(
+                                f"Branch parameter_bitwidth['{key}'] is a dict but '{key}' is not a container layer"
+                            )
+                        return False
+                else:
+                    if not isinstance(pb, int) or pb not in [2, 4, 8]:
+                        if raise_error:
+                            raise ValueError(
+                                f"Branch parameter_bitwidth['{key}'] must be int in [2, 4, 8], got {pb!r}"
+                            )
+                        return False
+                    if not isinstance(gran, QuantizationGranularity):
+                        if raise_error:
+                            raise TypeError(
+                                f"Branch granularity['{key}'] must be QuantizationGranularity, got {type(gran)}"
+                            )
+                        return False
+
+            for key in valid_pb_keys:
+                if key not in parameter_bitwidth:
+                    parameter_bitwidth[key] = 8
+                    granularity[key] = QuantizationGranularity.PER_CHANNEL
+
+        # Single validation pass for Block/Branch sublayer configs.
+        # Both dicts are fully filled here, so ab and pb are available together.
+        for key in valid_pb_keys:
+            sub_layer = _sublayer(key)
+            if isinstance(sub_layer, (Block, Branch)):
+                ab_entry   = activation_bitwidth.get(key) if isinstance(activation_bitwidth, dict) else activation_bitwidth
+                pb_entry   = parameter_bitwidth.get(key) if isinstance(parameter_bitwidth, dict) else parameter_bitwidth
+                gran_entry = granularity.get(key) if isinstance(granularity, dict) else granularity
+                if isinstance(ab_entry, dict) or isinstance(pb_entry, dict):
+                    if not sub_layer.is_quantize_config_valid(pb_entry, gran_entry, ab_entry, raise_error):
+                        return False
+
+        return True
+
+    def is_prune_config_valid(self, sparsity, raise_error: bool = True) -> bool:
+        """
+        Validates per-sublayer sparsity dict and fills defaults (0 for missing entries).
+        Scalar sparsity is not expanded here — Sequential handles uniform values.
+        """
+        if not isinstance(sparsity, dict):
+            return True
+        valid_keys = {"sublayer1", "sublayer2"} if self.sublayer2 is not None else {"sublayer1"}
+        for key in sparsity:
+            if key not in valid_keys:
+                if raise_error:
+                    raise NameError(
+                        f"Unknown key '{key}' in sparsity for Branch; "
+                        f"valid keys: {sorted(valid_keys)}"
+                    )
+                return False
+        for key, s in sparsity.items():
+            if not isinstance(s, (float, int)):
+                if raise_error:
+                    raise TypeError(f"Branch sparsity['{key}'] must be float or int, got {type(s)}")
+                return False
+        for key in valid_keys:
+            if key not in sparsity:
+                sparsity[key] = 0
+        return True
 
     def get_compression_parameters(self):
         return

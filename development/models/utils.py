@@ -215,7 +215,8 @@ def get_nas_compression_data(
     random_seed:Optional[int] = None,
     two_step:bool=True,
     eval_subset_size:Optional[int] = None,
-    max_filter_attempts:int = 200_000
+    max_filter_attempts:int = 200_000,
+    checkpoint_path:Optional[str] = None
 ) -> Dict[str, List]:
     """
     Fine-tune and evaluate compression configs, returning a NAS training dataset.
@@ -296,7 +297,7 @@ def get_nas_compression_data(
             )
 
             if two_step:
-                prune_epochs = max(1, epochs // 2)
+                prune_epochs = epochs // 2
                 quant_epochs = epochs - prune_epochs
 
                 pbar.set_postfix(phase=f"prune-train ({prune_epochs}ep)")
@@ -361,6 +362,9 @@ def get_nas_compression_data(
         for config_key, config_value in compression_config.items():
             compression_config_data[config_key].append(config_value)
         compression_config_data["metric"].append(compressed_model_metric["metric"])
+
+        if checkpoint_path is not None:
+            torch.save(dict(compression_config_data), checkpoint_path)
 
     return compression_config_data
 

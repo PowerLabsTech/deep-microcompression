@@ -83,11 +83,13 @@ class Layer(ABC):
             activation_bitwidth = previous_output_quantize.bitwidth
 
         if not change_quantization_scale:
-            if previous_output_quantize is not None and activation_bitwidth is not None:
-                assert previous_output_quantize.bitwidth == activation_bitwidth, (
-                    f"Recieved a activition bitwidth different from its input bitwidth for"
-                    f" a none quantization scale changing layer, {self.__class__.__name__}."
-                )
+            # If it is a container type layer, the individual layer will do the check
+            if not isinstance(activation_bitwidth, dict):
+                if previous_output_quantize is not None and activation_bitwidth is not None:
+                    assert previous_output_quantize.bitwidth == activation_bitwidth, (
+                        f"Recieved a activition bitwidth different from its input bitwidth for"
+                        f" a none quantization scale changing layer, {self.__class__.__name__}."
+                    )
 
         if "quantize" not in self.__dict__["_dmc"]:
             self.__dict__["_dmc"]["quantize"] = dict()

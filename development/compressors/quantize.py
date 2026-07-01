@@ -15,7 +15,7 @@ Key Features:
 """
 
 from typing import Optional, Iterable, Callable, Tuple, Union
-from math import prod
+import math
 from enum import Enum, auto
 
 import torch
@@ -113,7 +113,7 @@ class Quantize:
                         return base[0].scale, base[0].zero_point
                     self.base_accumulator: Callable[[Iterable["Quantize"]], Tuple[torch.Tensor, torch.Tensor]] = _assy_acc
                 else:
-                    self.base_accumulator: Callable[[Iterable["Quantize"]], torch.Tensor] = lambda base: prod([b.scale for b in base])
+                    self.base_accumulator: Callable[[Iterable["Quantize"]], torch.Tensor] = lambda base: math.prod([b.scale for b in base])
             else:
                 self.base_accumulator = base_accumulator
 
@@ -138,7 +138,9 @@ class Quantize:
                 scale = self.base_accumulator(self.base)
             else:
                 scale = self.base_accumulator(self.base)[0]
-        return scale
+        if isinstance(scale, torch.Tensor):
+            return torch.where(torch.isnan(scale), 1., scale).to(scale.device)
+        return 1.0 if not math.isnan(scale) else scale
 
     @property
     def zero_point(self):
@@ -271,7 +273,7 @@ class Quantize:
 
 
 
-def get_data_bits(module:Union["Layer", "Sequential"], current_activation:bool = True):
+def get_data_bits(module:Union["Layer", "Sequential"], current_activation:bool = False):
     """
     Returns the bit-width of a module's current (output) or input activation.
 
@@ -279,26 +281,31 @@ def get_data_bits(module:Union["Layer", "Sequential"], current_activation:bool =
     instances (reads _dmc["quantize"] set by init_quantize).
     Returns 32 for unquantized / float modules.
     """
-    if not module.is_quantized:
-        return 32
-    else:
-        dmc = module.__dict__["_dmc"]
-        if "quantize" in dmc:
-            # Layer context — activation_bitwidth is the output bitwidth
-            scheme = dmc["quantize"].get("scheme")
-            if scheme == QuantizationScheme.STATIC:
-                ab = dmc["quantize"].get("activation_bitwidth")
-        elif "compression_config" in dmc:
-            # Sequential context
-            scheme = dmc["compression_config"]["quantize"]["scheme"]
-            if scheme == QuantizationScheme.STATIC:
-                ab = dmc["compression_config"]["quantize"]["input_activation_bitwidth"]
-    if scheme != QuantizationScheme.STATIC:
-        return 32
+    if not current_activation:
+    # Input activation bitwidth (the previous layer's output bitwidth)
+        if not module.is_quantized:
+            return 32
+        else:
+            dmc = module.__dict__["_dmc"]
+            if "quantize" in dmc:
+                # Layer context — activation_bitwidth is the output bitwidth
+                scheme = dmc["quantize"].get("scheme")
+                if scheme == QuantizationScheme.STATIC:
+                    ab = dmc["quantize"].get("input_activation_bitwidth")
+                # This is necessary for container layer (Block/Branch) as their acitvation bitwidth are dicts
+                if isinstance(ab, dict):
+                    ab = ab["output"]
+            elif "compression_config" in dmc:
+                # Sequential context
+                scheme = dmc["compression_config"]["quantize"]["scheme"]
+                if scheme == QuantizationScheme.STATIC:
+                    ab = dmc["compression_config"]["quantize"]["input_activation_bitwidth"]
+        if scheme != QuantizationScheme.STATIC:
+            return 32
+        else:
+            return ab
     
-    if current_activation:
-        return ab
-    # Input activation (the previous layer's output bitwidth)
+    # Current/Output activation Bitwidth
     assert module.is_quantized, "Module is not quantized — no input activation bitwidth"
-    iab = module.__dict__["_dmc"]["quantize"].get("input_activation_bitwidth")
+    iab = module.__dict__["_dmc"]["quantize"].get("activation_bitwidth")
     return iab if iab is not None else 32

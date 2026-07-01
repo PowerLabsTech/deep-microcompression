@@ -5,7 +5,7 @@ import torch
 from torch import nn
 from torch._jit_internal import _copy_to_script_wrapper
 
-from .layer import Layer
+from .layer import Layer, Branch
 from ..compressors import (
     get_data_bits,
     Quantize,
@@ -83,7 +83,6 @@ class Block(Layer, nn.Module):
 
     def forward(self, input):
         for layer in self.layers():
-            # print(f"Block Layer {layer.__class__.__name__} {input.shape}")
             input = layer(input)
         return input
     
@@ -116,7 +115,6 @@ class Block(Layer, nn.Module):
         return keep_prev_channel_index
 
 
-
     def init_quantize(
         self, 
         parameter_bitwidth: int, 
@@ -129,10 +127,13 @@ class Block(Layer, nn.Module):
         super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
 
         def _parameter_bitwidth(name):
-            return parameter_bitwidth[name] if isinstance(parameter_bitwidth, dict) else parameter_bitwidth
+            return parameter_bitwidth.get(name) if isinstance(parameter_bitwidth, dict) else parameter_bitwidth
 
         def _granularity(name):
-            return granularity[name] if isinstance(granularity, dict) else granularity
+            return granularity.get(name) if isinstance(granularity, dict) else granularity
+        
+        def _activation_bitwidth(name):
+            return activation_bitwidth.get(name) if isinstance(activation_bitwidth, dict) else activation_bitwidth
 
         if scheme != QuantizationScheme.STATIC:
             for name, layer in self.names_layers():
@@ -151,14 +152,14 @@ class Block(Layer, nn.Module):
         for name, layer in layers[:-1]:
             previous_output_quantize = layer.init_quantize(
                 _parameter_bitwidth(name), _granularity(name),
-                scheme, activation_bitwidth, previous_output_quantize,
+                scheme, _activation_bitwidth(name), previous_output_quantize,
                 current_output_quantize=None
             )
 
         name, layer = layers[-1]
         previous_output_quantize = layer.init_quantize(
             _parameter_bitwidth(name), _granularity(name),
-            scheme, activation_bitwidth, previous_output_quantize,
+            scheme, _activation_bitwidth(name), previous_output_quantize,
             current_output_quantize=current_output_quantize
         )
 
@@ -166,7 +167,6 @@ class Block(Layer, nn.Module):
             assert self[-1].output_quantize is previous_output_quantize
 
         return previous_output_quantize
-
 
     
     def get_prune_channel_possible_hyperparameters(self):
@@ -184,6 +184,144 @@ class Block(Layer, nn.Module):
             if (hp := layer.get_quantize_possible_hyperparameters()) is not None
         }
         return result if result else None
+
+    def is_quantize_config_valid(
+        self,
+        parameter_bitwidth,
+        granularity,
+        activation_bitwidth,
+        raise_error: bool = True,
+    ) -> bool:
+        """
+        Validates and fills per-sublayer quantization config dicts in-place.
+
+        Called by Sequential.is_compression_config_valid for Block entries whose
+        parameter_bitwidth or activation_bitwidth is a per-sublayer dict.  Scalar
+        (uniform) arguments are accepted as-is without expansion.
+        """
+        valid_names = set(self.names())
+
+        # Validate activation_bitwidth first, since it is independent of parameter_bitwidth and granularity
+        if isinstance(activation_bitwidth, dict):
+            for sub_name in activation_bitwidth:
+                if sub_name not in valid_names:
+                    if raise_error:
+                        raise NameError(
+                            f"Unknown sublayer '{sub_name}' in activation_bitwidth for Block; "
+                            f"valid names: {sorted(valid_names)}"
+                        )
+                    return False
+            for sub_name, ab in activation_bitwidth.items():
+                if isinstance(ab, dict):
+                    if not isinstance(self[sub_name], (Block, Branch)):
+                        if raise_error:
+                            raise TypeError(
+                                f"Block activation_bitwidth['{sub_name}'] is a dict but '{sub_name}' is not a container layer"
+                            )
+                        return False
+                elif not isinstance(ab, int) or ab not in [2, 4, 8]:
+                    if raise_error:
+                        raise ValueError(
+                            f"Block activation_bitwidth['{sub_name}'] must be int in [2, 4, 8], got {ab!r}"
+                        )
+                    return False
+            for sub_name, layer in self.names_layers():
+                if sub_name not in activation_bitwidth:
+                    hp = layer.get_quantize_possible_hyperparameters()
+                    if hp is not None and "activation_bitwidth" in hp:
+                        activation_bitwidth[sub_name] = 8
+
+        # parameter_bitwidth and granularity are always paired — validate them together
+        if (isinstance(parameter_bitwidth, int) and not isinstance(granularity, QuantizationGranularity)) or \
+           (isinstance(granularity, QuantizationGranularity) and not isinstance(parameter_bitwidth, int)):
+            if raise_error:
+                raise ValueError("Block: parameter_bitwidth and granularity must both be scalars or both be dicts.")
+            return False
+
+        if (isinstance(parameter_bitwidth, dict) and not isinstance(granularity, dict)) or \
+           (isinstance(granularity, dict) and not isinstance(parameter_bitwidth, dict)):
+            if raise_error:
+                raise ValueError("Block: parameter_bitwidth and granularity must both be dicts or both be scalars.")
+            return False
+
+        if isinstance(parameter_bitwidth, dict):
+            if parameter_bitwidth.keys() != granularity.keys():
+                if raise_error:
+                    raise ValueError("Block: parameter_bitwidth and granularity dicts must have the same keys.")
+                return False
+
+            for (sub_name, pb), (_, gran) in zip(parameter_bitwidth.items(), granularity.items()):
+                if sub_name not in valid_names:
+                    if raise_error:
+                        raise NameError(
+                            f"Unknown sublayer '{sub_name}' in parameter_bitwidth for Block; "
+                            f"valid names: {sorted(valid_names)}"
+                        )
+                    return False
+                if isinstance(pb, dict):
+                    if not isinstance(self[sub_name], (Block, Branch)):
+                        if raise_error:
+                            raise TypeError(
+                                f"Block parameter_bitwidth['{sub_name}'] is a dict but '{sub_name}' is not a container layer"
+                            )
+                        return False
+                else:
+                    if not isinstance(pb, int) or pb not in [2, 4, 8]:
+                        if raise_error:
+                            raise ValueError(
+                                f"Block parameter_bitwidth['{sub_name}'] must be int in [2, 4, 8], got {pb!r}"
+                            )
+                        return False
+                    if not isinstance(gran, QuantizationGranularity):
+                        if raise_error:
+                            raise TypeError(
+                                f"Block granularity['{sub_name}'] must be QuantizationGranularity, got {type(gran)}"
+                            )
+                        return False
+
+            for sub_name in valid_names:
+                if sub_name not in parameter_bitwidth:
+                    parameter_bitwidth[sub_name] = 8
+                    granularity[sub_name] = QuantizationGranularity.PER_CHANNEL
+
+        # Single validation pass for Block/Branch sublayer configs.
+        # Both dicts are fully filled here, so ab and pb are available together.
+        for sub_name, sub_layer in self.names_layers():
+            if isinstance(sub_layer, (Block, Branch)):
+                ab_entry   = activation_bitwidth.get(sub_name) if isinstance(activation_bitwidth, dict) else activation_bitwidth
+                pb_entry   = parameter_bitwidth.get(sub_name) if isinstance(parameter_bitwidth, dict) else parameter_bitwidth
+                gran_entry = granularity.get(sub_name) if isinstance(granularity, dict) else granularity
+                if isinstance(ab_entry, dict) or isinstance(pb_entry, dict):
+                    if not sub_layer.is_quantize_config_valid(pb_entry, gran_entry, ab_entry, raise_error):
+                        return False
+
+        return True
+
+    def is_prune_config_valid(self, sparsity, raise_error: bool = True) -> bool:
+        """
+        Validates per-sublayer sparsity dict and fills defaults (0 for missing entries).
+        Scalar sparsity is not expanded here — Sequential handles uniform values.
+        """
+        if not isinstance(sparsity, dict):
+            return True
+        valid_names = set(self.names())
+        for sub_name in sparsity:
+            if sub_name not in valid_names:
+                if raise_error:
+                    raise NameError(
+                        f"Unknown sublayer '{sub_name}' in sparsity for Block; "
+                        f"valid names: {sorted(valid_names)}"
+                    )
+                return False
+        for sub_name, s in sparsity.items():
+            if not isinstance(s, (float, int)):
+                if raise_error:
+                    raise TypeError(f"Block sparsity['{sub_name}'] must be float or int, got {type(s)}")
+                return False
+        for sub_name in valid_names:
+            if sub_name not in sparsity:
+                sparsity[sub_name] = 0
+        return True
 
     def get_compression_parameters(self):
         return
@@ -208,14 +346,14 @@ class Block(Layer, nn.Module):
         include_runtime=False, ptr_size=2
     ) -> int:
         if isinstance(input_shape, tuple): input_shape = torch.Size(input_shape)
-        data_per_byte = get_data_bits(self)
         output_shape = input_shape
         data_bits = get_data_bits(self)
         max_sublayer_size = pad_bits_to_byte(input_shape.numel() * data_bits)
 
         for layer in self.layers():
             size = layer.get_workspace_size(
-                torch.Size(output_shape), data_per_byte, include_locals, include_runtime, ptr_size)
+                torch.Size(output_shape), include_locals, include_runtime, ptr_size
+            )
             max_sublayer_size = max(max_sublayer_size, size)
             output_shape = layer.get_output_tensor_shape(output_shape)
         if not (include_locals or include_runtime):
