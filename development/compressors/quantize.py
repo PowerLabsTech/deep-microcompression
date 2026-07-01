@@ -118,45 +118,8 @@ class Quantize:
                 self.base_accumulator = base_accumulator
 
         self.prune_channel = prune_channel
-
-    @property
-    def scale(self):
-        """Calculates the scaling factor: (max - min) / (2^bits - 1)."""
-        if self.base is None:
-            if self.rmax is None:
-                raise RuntimeError(
-                    f"Quantizer on {self.module} has not been calibrated. "
-                    "Run a forward pass before accessing scale."
-                )
-            if self.scale_type == QuantizationScaleType.SYMMETRIC:
-                scale = get_quantize_scale_sy(self.rmax, self.bitwidth)
-            else:
-                scale = get_quantize_scale_zero_point_assy(self.rmax, self.rmin, self.bitwidth)[0]
-        else:
-            # Dependent quantizer: inherits scale from the previous layer's output quantizer.
-            if self.scale_type == QuantizationScaleType.SYMMETRIC:
-                scale = self.base_accumulator(self.base)
-            else:
-                scale = self.base_accumulator(self.base)[0]
-        if isinstance(scale, torch.Tensor):
-            return torch.where(torch.isnan(scale), 1., scale).to(scale.device)
-        return 1.0 if not math.isnan(scale) else scale
-
-    @property
-    def zero_point(self):
-        """Calculates the integer offset (Zero-Point) for asymmetric quantization."""
-        assert self.scale_type == QuantizationScaleType.ASSYMMETRIC, \
-            f"zero_point is only defined for ASSYMMETRIC quantizers, got {self.scale_type}"
-        if self.base is None:
-            if self.rmin is None:
-                raise RuntimeError(
-                    f"Quantizer on {self.module} has not been calibrated. "
-                    "Run a forward pass before accessing zero_point."
-                )
-            return get_quantize_scale_zero_point_assy(self.rmax, self.rmin, self.bitwidth)[1].to(torch.int8)
-        else:
-            return self.base_accumulator(self.base)[1].to(torch.int8)
-
+        self.scale = None
+        self.zero_point = None
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -178,32 +141,54 @@ class Quantize:
         Exponential Moving Average (EMA). This ensures the static scale 
         factors are robust to outliers.
         """
-        if self.scale_type == QuantizationScaleType.SYMMETRIC:
-            if self.granularity == QuantizationGranularity.PER_TENSOR:
-                if self.rmax is None: self.rmax = x.abs().max()
-                else: self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.abs().max() 
+        if self.base is None:
+            if self.scale_type == QuantizationScaleType.SYMMETRIC:
+                if self.granularity == QuantizationGranularity.PER_TENSOR:
+                    if self.rmax is None: self.rmax = x.abs().max()
+                    else: self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.abs().max() 
+                else:
+                    if self.rmax is None: self.rmax = (x.abs().view(x.size(0), -1).max(dim=1)[0]).to(x.device)
+                    else: self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.abs().view(x.size(0), -1).max(dim=1)[0]
             else:
-                if self.rmax is None: self.rmax = (x.abs().view(x.size(0), -1).max(dim=1)[0]).to(x.device)
-                else: self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.abs().view(x.size(0), -1).max(dim=1)[0]
+                if self.granularity == QuantizationGranularity.PER_TENSOR:
+                    # Symmetric: Range is [-max(|x|), +max(|x|)]
+                    if self.rmax is None or self.rmin is None: 
+                        self.rmax = x.max()
+                        self.rmin = x.min()
+                    else:
+                        self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.max()
+                        self.rmin = self.rmin * (1 -self.avg_exp) + self.avg_exp * x.min()
+                else:
+                    # Asymmetric: Range is [min(x), max(x)]
+                    if self.rmax is None or self.rmin is None: 
+                        self.rmax = x.view(x.size(0), -1).max(dim=1)[0]
+                        self.rmin = x.view(x.size(0), -1).min(dim=1)[0]
+                    else:
+                        self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.view(x.size(0), -1).max(dim=1)[0]
+                        self.rmin = self.rmin * (1 -self.avg_exp) + self.avg_exp * x.view(x.size(0), -1).min(dim=1)[0]
 
-        else:
-            if self.granularity == QuantizationGranularity.PER_TENSOR:
-                # Symmetric: Range is [-max(|x|), +max(|x|)]
-                if self.rmax is None or self.rmin is None: 
-                    self.rmax = x.max()
-                    self.rmin = x.min()
-                else:
-                    self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.max()
-                    self.rmin = self.rmin * (1 -self.avg_exp) + self.avg_exp * x.min()
+            if self.scale_type == QuantizationScaleType.SYMMETRIC:
+                self.scale = get_quantize_scale_sy(self.rmax, self.bitwidth)
             else:
-                # Asymmetric: Range is [min(x), max(x)]
-                if self.rmax is None or self.rmin is None: 
-                    self.rmax = x.view(x.size(0), -1).max(dim=1)[0]
-                    self.rmin = x.view(x.size(0), -1).min(dim=1)[0]
-                else:
-                    self.rmax = self.rmax * (1 -self.avg_exp) + self.avg_exp * x.view(x.size(0), -1).max(dim=1)[0]
-                    self.rmin = self.rmin * (1 -self.avg_exp) + self.avg_exp * x.view(x.size(0), -1).min(dim=1)[0]
-                
+                self.scale, self.zero_point = get_quantize_scale_zero_point_assy(self.rmax, self.rmin, self.bitwidth)
+        else:
+            # Dependent quantizer: inherits scale from the previous layer's output quantizer.
+            if self.scale_type == QuantizationScaleType.SYMMETRIC:
+                self.scale = self.base_accumulator(self.base)
+            else:
+                self.scale, self.zero_point = self.base_accumulator(self.base)
+        if isinstance(self.scale, torch.Tensor):
+            self.scale = torch.where(torch.isnan(self.scale), 1., self.scale).to(device=self.scale.device, dtype=self.scale.dtype)
+        else:
+            self.scale = 1.0 if math.isnan(self.scale) else self.scale
+
+        if self.scale_type == QuantizationScaleType.ASSYMMETRIC:
+            if isinstance(self.zero_point, torch.Tensor):
+                if self.zero_point.is_floating_point():
+                    self.zero_point = torch.where(torch.isnan(self.zero_point), 0, self.zero_point).to(device=self.zero_point.device, dtype=self.zero_point.dtype)
+                    self.zero_point = self.zero_point.to(torch.int8)
+            else:
+                self.zero_point = 0 if math.isnan(self.zero_point) else self.zero_point
 
     def fake_apply(self, x: torch.Tensor) -> torch.Tensor:
         """
