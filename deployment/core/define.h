@@ -22,7 +22,13 @@
  * Abstracts memory access to support Harvard Architectures (AVR/Arduino)
  * where constant data (weights) is stored in Flash (PROGMEM).
  */
-#if defined(__AVR__) || defined(ARDUINO_ARCH_AVR)
+#if defined(__AVR__) && defined(__clang__)
+    #include <avr/pgmspace.h>
+    #define dmc_pgm_read_byte(addr)  (*(const PROGMEM uint8_t*)addr)
+    #define dmc_pgm_read_word(addr)  (*(const PROGMEM uint16_t*)addr)
+    #define dmc_pgm_read_dword(addr) ((*(const PROGMEM uint32_t*)addr))
+    #define dmc_pgm_read_float(addr) (*(const PROGMEM float*)addr)
+#elif defined(__AVR__) && defined(__GNUC__)//|| defined(ARDUINO_ARCH_AVR)
     #include <avr/pgmspace.h>
     #define dmc_pgm_read_byte(addr)  pgm_read_byte(addr)
     #define dmc_pgm_read_word(addr)  pgm_read_word(addr)

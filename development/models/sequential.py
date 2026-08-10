@@ -1054,9 +1054,20 @@ class Sequential(nn.Sequential):
         else:
             header_file += "#include <stdint.h>\n#include <Arduino.h>\n#include \"deep_microcompression.h\"\n\n\n"
 
+        header_file +=  """
+#define TEST
+
+#if defined(TEST)
+#define TEMP(...) __VA_ARGS__
+#else
+#define TEMP(...)
+#endif
+        """
         definition_file = f"#include \"{var_name}.h\"\n\n"
+        
+
         param_definition_file = f"#include \"{var_name}.h\"\n\n"
-    
+        
         input_shape = torch.Size(input_shape)
         # Calculate workspace requirements
         max_layer_acitivation_workspace_size = self.get_workspace_size(torch.Size(input_shape))
@@ -1162,13 +1173,13 @@ class Sequential(nn.Sequential):
                     if not for_arduino:
                         test_input_def = f"\nconst float test_input[] = {{\n"
                     else:
-                        test_input_def = f"#include <Arduino.h>\n\nconst float test_input[] PROGMEM= {{\n"
+                        test_input_def = f"#include <Arduino.h>\n\nconst float test_input[] PROGMEM= {{TEMP(\n"
 
                     for line in torch.split(test_input.flatten(), 28):
                         test_input_def += "    " + ", ".join(
                             [f"{val:.4f}" for val in line]
                         ) + ",\n"
-                    test_input_def += "};\n"
+                    test_input_def += ")};\n"
             write_str_to_c_file(test_input_def, f"{var_name}_test_input.h", include_dir)
 
         return

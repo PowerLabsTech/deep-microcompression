@@ -516,7 +516,7 @@ def convert_tensor_to_bytes_var(tensor: torch.Tensor,
         # By default Arduino loads all global variable on the RAM.
         # https://docs.arduino.cc/language-reference/en/variables/utilities/PROGMEM/
         var_header_str = f"extern const uint8_t {var_name}[] PROGMEM;\n"
-        var_def_str = f"\nconst uint8_t {var_name}[] PROGMEM = {{\n"
+        var_def_str = f"\nconst uint8_t {var_name}[] PROGMEM = {{TEMP(\n"
 
     if tensor.dtype != torch.int8 or bitwidth == 8:
         # Standard byte conversion for non-packed data
@@ -542,8 +542,11 @@ def convert_tensor_to_bytes_var(tensor: torch.Tensor,
             var_def_str += "    " + ", ".join(
                 [f"0x{b:02X}" for val in bytes for b in val]
             ) + ",\n"
-            
+    if for_arduino:
+        var_def_str += ")"
+    
     var_def_str += "};\n"
+        
     return var_header_str, var_def_str
 
 
