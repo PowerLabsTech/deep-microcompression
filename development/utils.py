@@ -37,23 +37,18 @@ PARAMETER_BITWIDTH_2 = "P2"
 
 
 
-class RoundSTE(torch.autograd.Function):
+def round_ste(x: torch.Tensor) -> torch.Tensor:
     """
     Straight-Through Estimator (STE) for Rounding.
-    
-    During Forward pass: returns round(input).
-    During Backward pass: passes gradient through unchanged (identity).
+
+    Forward : rounds x to nearest integer.
+    Backward: gradient passes straight through (identity).
+
+    Implemented without a custom autograd.Function to avoid the Python
+    overhead of 100+ Function object creations per forward/backward pass.
+    x + (round(x) - x).detach() is mathematically equivalent to STE.
     """
-    @staticmethod
-    def forward(ctx, input) -> torch.Tensor:
-        return torch.round(input)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output  # Straight-through: pass gradient
-
-def round_ste(x: torch.Tensor) -> torch.Tensor:
-    return RoundSTE.apply(x)
+    return x + (torch.round(x) - x).detach()
 
 
 def get_bitwidth_range(bitwidth: int) -> Tuple[int, int]:
@@ -533,8 +528,6 @@ def convert_tensor_to_bytes_var(tensor: torch.Tensor,
         # Special handling for packed data (4-bit, 2-bit, etc.)
         if bitwidth is not None:
             data_per_byte = 8 // bitwidth
-            # for i in range(math.ceil(len(line)/data_per_byte)):
-        tensor = tensor.flatten()
 
         for line in torch.split(tensor.flatten(), INT8_BYTE_PER_LINE * data_per_byte):
             bytes = []

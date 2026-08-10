@@ -83,45 +83,37 @@ class Block(Layer, nn.Module):
 
     def forward(self, input):
         for layer in self.layers():
+            # print(f"Block Layer {layer.__class__.__name__} {input.shape}")
             input = layer(input)
         return input
     
 
     def init_prune_channel(
-        self, 
-        sparsity: float, 
+        self,
+        sparsity,  # float | int (uniform) or dict[sublayer_name → float|int] (per-sublayer)
         input_shape: torch.Size,
-        keep_prev_channel_index:Optional[torch.Tensor], 
+        keep_prev_channel_index:Optional[torch.Tensor],
         keep_current_channel_index:Optional[torch.Tensor],
-        is_output_layer: bool = False, 
+        is_output_layer: bool = False,
         metric: str = "l2"
     ):
-        
-        # Prune all layers except last
-        for name, layer in list(self.names_layers())[:-1]:
+        def _sparsity(name):
+            return sparsity.get(name, 0) if isinstance(sparsity, dict) else sparsity
+
+        layers = list(self.names_layers())
+        for name, layer in layers[:-1]:
             keep_prev_channel_index = layer.init_prune_channel(
-                sparsity, input_shape, keep_prev_channel_index, keep_current_channel_index,
-                # sparsity[name], input_shape, keep_prev_channel_index, keep_current_channel_index,
+                _sparsity(name), input_shape, keep_prev_channel_index, keep_current_channel_index,
                 is_output_layer=False, metric=metric
             )
             input_shape = layer.get_output_tensor_shape(torch.Size(input_shape))
 
-        name, layer = list(self.names_layers())[-1]
+        name, layer = layers[-1]
         keep_prev_channel_index = layer.init_prune_channel(
-            sparsity, input_shape, keep_prev_channel_index, keep_current_channel_index,
-            # sparsity[name], input_shape, keep_prev_channel_index, keep_current_channel_index,
+            _sparsity(name), input_shape, keep_prev_channel_index, keep_current_channel_index,
             is_output_layer=is_output_layer, metric=metric
         )
-
         return keep_prev_channel_index
-
-
-
-    def get_prune_channel_possible_hyperparameters(self):
-        return None
-    
-    def get_quantize_possible_hyperparameters(self):
-        return None
 
 
 
@@ -135,25 +127,63 @@ class Block(Layer, nn.Module):
         current_output_quantize: Optional[Quantize] = None,
     ):
         super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
-        
+
+        def _parameter_bitwidth(name):
+            return parameter_bitwidth[name] if isinstance(parameter_bitwidth, dict) else parameter_bitwidth
+
+        def _granularity(name):
+            return granularity[name] if isinstance(granularity, dict) else granularity
+
         if scheme != QuantizationScheme.STATIC:
-            for layer in self.layers():
-                layer.init_quantize(parameter_bitwidth, scheme, granularity)
+            for name, layer in self.names_layers():
+                layer.init_quantize(_parameter_bitwidth(name), _granularity(name), scheme)
             return
 
-        previous_output_quantize = self.input_quantize
-        for layer in self.layers():
-            previous_output_quantize = layer.init_quantize(bitwidth, scheme, granularity, previous_output_quantize)
+        # Only the last layer receives current_output_quantize. That argument forces a layer's
+        # output scale to match an external quantizer — required when this Block sits inside a
+        # Branch, where both paths must share the same integer scale for the residual add to be
+        # valid. Intermediate layers must calibrate independently; passing the constraint inward
+        # would force every layer's output to the external scale, which is wrong (activations
+        # mid-block should not be clamped to the final branch scale) and would prevent each
+        # layer from finding its own optimal range during QAT.
+
+        layers = list(self.names_layers())
+        for name, layer in layers[:-1]:
+            previous_output_quantize = layer.init_quantize(
+                _parameter_bitwidth(name), _granularity(name),
+                scheme, activation_bitwidth, previous_output_quantize,
+                current_output_quantize=None
+            )
+
+        name, layer = layers[-1]
+        previous_output_quantize = layer.init_quantize(
+            _parameter_bitwidth(name), _granularity(name),
+            scheme, activation_bitwidth, previous_output_quantize,
+            current_output_quantize=current_output_quantize
+        )
 
         if hasattr(self[-1], "output_quantize"):
-            return self[-1].output_quantize 
-        return None
+            assert self[-1].output_quantize is previous_output_quantize
+
+        return previous_output_quantize
 
 
     
     def get_prune_channel_possible_hyperparameters(self):
-        return self.sublayer1.get_prune_channel_possible_hyperparameters()
+        result = {
+            name: hp
+            for name, layer in self.names_layers()
+            if (hp := layer.get_prune_channel_possible_hyperparameters()) is not None
+        }
+        return result if result else None
 
+    def get_quantize_possible_hyperparameters(self):
+        result = {
+            name: hp
+            for name, layer in self.names_layers()
+            if (hp := layer.get_quantize_possible_hyperparameters()) is not None
+        }
+        return result if result else None
 
     def get_compression_parameters(self):
         return

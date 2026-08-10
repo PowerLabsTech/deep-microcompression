@@ -34,13 +34,16 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
 
     
     def forward(self, input):
-        with torch.no_grad():
-            if self.is_pruned_channel and self.affine:
-                
-                self.weight.data = self.prune_channel(self.weight)
-                self.bias.data = self.prune_channel(self.bias)
-                    
-        return super().forward(input)
+        if self.is_pruned_channel and self.affine:
+            weight = self.prune_channel(self.weight)
+            bias   = self.prune_channel(self.bias)
+        else:
+            weight = self.weight
+            bias   = self.bias
+        return nn.functional.batch_norm(
+            input, self.running_mean, self.running_var,
+            weight, bias, self.training, self.momentum, self.eps
+        )
     
     # integer requirement, BN is mathematically folded into Conv weights.
     # y = (x - mean) / sqrt(var + eps) * gamma + beta
@@ -65,7 +68,7 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
             return self.bias - self.running_mean * self.weight / torch.sqrt(self.running_var + self.eps)
         return self.bias
    
-    @torch.no_grad
+    @torch.no_grad()
     def init_prune_channel(
         self, 
         sparsity: float, 
@@ -97,9 +100,6 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
         return keep_current_channel_index
     
 
-    def get_prune_channel_possible_hyperparameters(self):
-        return None
-
 
     @torch.no_grad()
     def init_quantize(
@@ -122,15 +122,11 @@ class BatchNorm2d(Layer, nn.BatchNorm2d):
         """
         super().init_quantize(parameter_bitwidth, granularity, scheme, activation_bitwidth, previous_output_quantize)
         if scheme == QuantizationScheme.STATIC:
-            warnings.warn("You are preforming static quantization with a model with batchnorm, "
+            warnings.warn("You are performing static quantization with a model with batchnorm, "
                           " it best to fuse it first before quantizing the model")
             
         return previous_output_quantize
 
-
-    def get_quantize_possible_hyperparameters(self):
-        return None
-    
 
     def get_size_in_bits(self):
         """Calculates size of the effective (folded) parameters."""

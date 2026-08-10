@@ -43,77 +43,70 @@ class Prune_Channel:
         self.layer = layer
         self.keep_current_channel_index = keep_current_channel_index
         self.keep_prev_channel_index = keep_prev_channel_index
+        # Mask is constant for the lifetime of this pruner; cache it on first use.
+        self._mask_cache: Optional[torch.Tensor] = None
 
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
         Applies the pruning mask during the Forward Pass.
-        
-        Used during the "Fine-tune Parameters". It does NOT 
-        reduce tensor size, but multiplies pruned weights by zero so the 
-        network learns to function without them.
+
+        Does NOT reduce tensor size — multiplies pruned weights by zero so the
+        network learns to function without them (Soft Pruning / Fine-tune stage).
         """
         if self.layer.training:
             self.update_parameters(x)
         return self.fake_apply(x)
-    
+
+
     def update_parameters(self, x: torch.Tensor) -> None:
+        """
+        Not used in this implementation, but can be extended to update internal state or perform additional checks during training.
+        """
         pass
+
+
+    def _build_mask(self, x: torch.Tensor) -> torch.Tensor:
+        """Builds and caches the binary pruning mask matching x's shape."""
+        device = x.device
+        if x.ndim > 1:
+            assert self.keep_prev_channel_index is not None, \
+                "Tensor with ndim > 1 cannot be pruned without keep_prev_channel_index"
+            mask = torch.zeros_like(x)
+            out_idx = self.keep_current_channel_index.to(device)
+            in_idx  = self.keep_prev_channel_index.to(device)
+            mask[out_idx[:, None], in_idx[None, :]] = 1
+        else:
+            mask = torch.zeros_like(x)
+            mask[self.keep_current_channel_index.to(device)] = 1
+        return mask
 
 
     def fake_apply(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Simulates pruning by applying a binary mask (Soft Pruning).
-        
-        Logic:
-        1. Create a mask of 1s.
-        2. Set pruned channels (Input and Output) to 0.
-        3. Multiply weights by mask.
-        
-        This preserves the tensor shape required by PyTorch's autograd but 
-        simulates the sparsity effects.
+        Simulates pruning by zeroing out pruned channels (Soft Pruning).
+
+        The mask is built once and reused — indices are fixed after init_prune_channel.
         """
-        if x.ndim > 1:
-            assert self.keep_prev_channel_index is not None, "Tensor with ndim > 1 cannot be pruned without keep_prev_channel_index"
-            # Removing connections from previous layers
-            mask_prev_channel = torch.zeros_like(x)
-
-            mask_prev_channel_index = [slice(None)]*x.ndim
-            # PyTorch 2.9 requires multidimensional indices to be tuples; convert to tuple
-            # to avoid deprecated non-tuple indexing and future incorrect tensor indexing.
-            mask_prev_channel_index[1] = self.keep_prev_channel_index
-            mask_prev_channel[tuple(mask_prev_channel_index)] = 1 
-
-            #  Removing connections from this layer
-            mask_current_channel = torch.zeros_like(x)
-
-            mask_current_channel_index = [slice(None)]*x.ndim
-            mask_current_channel_index[0] = self.keep_current_channel_index
-
-            mask_current_channel[tuple(mask_current_channel_index)] = 1 
-
-            # Combine masks (Intersection of valid inputs and valid outputs)
-            mask = torch.mul(mask_current_channel, mask_prev_channel)
-        else:
-            mask = torch.zeros_like(x)
-            mask[self.keep_current_channel_index] = 1
-
-        return torch.mul(x, mask)
+        if self._mask_cache is None or self._mask_cache.shape != x.shape:
+            self._mask_cache = self._build_mask(x)
+        return torch.mul(x, self._mask_cache)
 
     def apply(self, x: torch.Tensor) -> torch.Tensor:
         """
         Performs Physical Pruning (Hard Pruning).
-        
+
         Args:
             x: The weight or bias tensor to prune.
-            
+
         Returns:
             A smaller tensor containing only the kept parameters.
         """
+        device = x.device
         if x.ndim > 1:
             assert self.keep_prev_channel_index is not None, "Tensor with ndim > 1 cannot be pruned without keep_prev_channel_index"
-            x = torch.index_select(x, 1, self.keep_prev_channel_index)
-            x = torch.index_select(x, 0, self.keep_current_channel_index)
+            x = torch.index_select(x, 1, self.keep_prev_channel_index.to(device))
+            x = torch.index_select(x, 0, self.keep_current_channel_index.to(device))
         else:
-            x = torch.index_select(x, 0, self.keep_current_channel_index)
+            x = torch.index_select(x, 0, self.keep_current_channel_index.to(device))
         return x

@@ -2,13 +2,27 @@
 @file fuse.py
 @brief Layer Fusion Utilities for Bare-Metal Optimization
 
-It merges separate layers (Conv2d, BatchNorm, ReLU) into unified "Fused" layers.
+Merges adjacent layer pairs into unified fused layers and transfers DMC
+pipeline state (pruning masks, quantization observers) to the new objects.
+
+Supported fusions:
+  Conv2d + BatchNorm2d  -> Conv2d       (BN folded into weights/bias)
+  Conv2d + ReLU         -> Conv2dReLU
+  Conv2d + ReLU6        -> Conv2dReLU6
+  Linear + ReLU         -> LinearReLU
+  Linear + ReLU6        -> LinearReLU6
 
 Role in DMC Pipeline:
-1.  Pre-Quantization: BatchNorm folding is required before calibration to 
-    ensure integer scales capture the true effective weight distribution.
-2.  Inference Optimization: Reduces the number of function calls and 
-    intermediate SRAM buffers required by the generated C library.
+1.  Pre-Quantization: BN folding is required before QAT so that integer
+    scales are calibrated against the true effective weight distribution,
+    not the pre-fold weights.
+2.  Bias synthesis: When Conv2d had bias=False and BN folding introduces
+    a bias, fuse_conv2d_batchnorm2d synthesises bias_prune_channel (from
+    BN's existing prune_channel) and bias_quantize (scale = s_w * s_in)
+    so the fused layer's invariants match a layer that had bias=True all
+    along.
+3.  Inference optimisation: Fewer layer objects reduce function-call
+    overhead and intermediate SRAM buffers in the generated C library.
 """
 import torch
 
@@ -17,19 +31,19 @@ from ..layers.batchnorm import BatchNorm2d
 from ..layers.linear import Linear
 from ..layers.activation import ReLU, ReLU6
 from ..layers.fused_layers import LinearReLU, Conv2dReLU, LinearReLU6, Conv2dReLU6
+from ..compressors import Quantize, QuantizationScheme, QuantizationScaleType
+from ..utils import STATIC_BIAS_BITWDHT
 
 
 @torch.no_grad()
 def init_dmc_parameter(original_layer, fused_layer):
     """
-    Transfers DMC Pipeline State from source layers to the new fused layer.
+    Copies all DMC pipeline state from original_layer to fused_layer.
 
-    When layers are fused (e.g., Conv+BN -> Conv), the new object must inherit:
-    1.  Pruning Masks: `weight_prune_channel`, `is_pruned_channel`.
-    2.  Quantization Observers: `input_quantize`, `output_quantize`.
-
-    This ensures that optimization decisions made in earlier pipeline stages 
-    are not lost during the fusion graph transformation.
+    Covers pruning masks (weight/bias_prune_channel, is_pruned_channel),
+    quantization observers (weight/bias/input/output_quantize, is_quantized),
+    and the _dmc metadata dict. Only attributes that exist on original_layer
+    are copied — missing attributes are left unset on fused_layer.
     """
     if "_dmc" in original_layer.__dict__:
         fused_layer.__dict__["_dmc"] = original_layer.__dict__["_dmc"]
@@ -63,27 +77,25 @@ def init_dmc_parameter(original_layer, fused_layer):
 @torch.no_grad()
 def fuse_conv2d_batchnorm2d(conv2d, batchnorm2d):
     """
-    Folds BatchNorm2d into Conv2d weights.
+    Folds BatchNorm2d statistics into Conv2d weights and bias.
 
-    Mathematically transforms:
-        y = (W*x + b - mean) * (gamma / sigma) + beta
-    Into:
-        y = W' * x + b'
-        Where W' = W * (gamma / sigma)
-        And   b' = (b - mean) * (gamma / sigma) + beta
+    Transforms:
+        y = BN(W*x + b)  =  W'*x + b'
+        W' = W * gamma / sqrt(var + eps)
+        b' = (b - mean) * gamma / sqrt(var + eps) + beta
 
-    Why DMC needs this:
-    Running a standalone BatchNorm layer 
-    on a microcontroller is inefficient and breaks the integer-only flow. 
-    Folding bakes the normalization constants into the weights *before* they 
-    are quantized to int8.
+    When conv2d.bias is None the fused bias is entirely new. In that case
+    this function also synthesises bias_prune_channel (reusing BN's existing
+    prune_channel, which holds the same output-channel keep-indices) and
+    bias_quantize (scale = s_w * s_in, identical to what init_quantize would
+    have created had the bias existed at quantization time).
 
     Args:
-        conv2d: Source convolution layer.
-        batchnorm2d: Source batchnorm layer (must follow conv2d).
+        conv2d: Source Conv2d layer (already pruned/quantized if applicable).
+        batchnorm2d: BatchNorm2d that immediately follows conv2d.
 
     Returns:
-        A standard Conv2d layer containing the fused weights and bias.
+        A new Conv2d with bias=True containing the fused parameters.
     """
     assert isinstance(conv2d, Conv2d) and isinstance(batchnorm2d, BatchNorm2d), "conv2d has to be of Conv2d type and batchnorm2d has to be BatchNorm2d type"
     assert conv2d.out_channels == batchnorm2d.num_features, f"conv2d and batchnorm not fuseable, conv2d has {conv2d.out_channels} out_channels and batchnorm2d has {batchnorm2d.num_features} num_features, the must tbe equal"
@@ -102,7 +114,22 @@ def fuse_conv2d_batchnorm2d(conv2d, batchnorm2d):
         fused_layer.bias.copy_(conv2d.bias * batchnorm2d.folded_weight + batchnorm2d.folded_bias) # type: ignore
     else:
         fused_layer.bias.copy_(batchnorm2d.folded_bias) # type: ignore
+        # Bias is new (conv had bias=False). BN's prune_channel already holds the right
+        # output-channel keep-indices — reuse it directly instead of creating a duplicate.
+        if hasattr(batchnorm2d, "prune_channel"):
+            fused_layer.bias_prune_channel = batchnorm2d.prune_channel
 
+        if hasattr(conv2d, "weight_quantize") and hasattr(conv2d, "input_quantize"):
+            dmc_q = conv2d.__dict__.get("_dmc", {}).get("quantize", {})
+            scheme = dmc_q.get("scheme")
+            granularity = dmc_q.get("granularity")
+            if scheme == QuantizationScheme.STATIC and granularity is not None:
+                fused_layer.bias_quantize = Quantize(
+                    fused_layer, STATIC_BIAS_BITWDHT, scheme, granularity,
+                    scale_type=QuantizationScaleType.SYMMETRIC,
+                    base=[conv2d.weight_quantize, conv2d.input_quantize],
+                    prune_channel=getattr(fused_layer, "bias_prune_channel", None),
+                )
     return fused_layer
 
 

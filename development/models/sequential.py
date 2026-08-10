@@ -35,6 +35,8 @@ from torch.utils import data
 from ..layers.layer import Layer
 from ..layers.activation import ReLU, ReLU6
 from ..layers.batchnorm import BatchNorm2d
+from ..layers.block import Block
+from ..layers.branch import Branch
 from ..layers.conv import Conv2d
 from ..layers.flatten import Flatten
 from ..layers.linear import Linear
@@ -47,6 +49,7 @@ from ..compressors import (
     QuantizationScheme,
     QuantizationScaleType,
     QuantizationGranularity,
+    QuantizationBitWidthError,
 )
 from ..utils import (
     convert_tensor_to_bytes_var,
@@ -140,11 +143,10 @@ class Sequential(nn.Sequential):
             for layer in other:
                 result.add_layer(layer=layer)        
             return result
-        elif isinstance(other, Layer):
-            result.add_layer(other) 
-
+        elif isinstance(other, (Layer, nn.Module)):
+            result.add_layer(other)
             return result
-        raise RuntimeError(f"cannot add type{other} to Sequential")
+        raise RuntimeError(f"cannot add type {other} to Sequential")
     
     def add_layer(self, layer: Union[Layer, nn.Module], name: str="") -> None:
         """
@@ -438,20 +440,24 @@ class Sequential(nn.Sequential):
               
         for compression_type, compression_type_param in config.items():
             if compression_type == "prune_channel":
+                
+                if isinstance(config["prune_channel"]["sparsity"], (float, int)) and config["prune_channel"]["sparsity"] == 0:
+                    continue
 
-                if not isinstance(config["prune_channel"]["sparsity"], (float, int)) or config["prune_channel"]["sparsity"] != 0:
+                def prune_channel_layer(layer): layer.is_pruned_channel = True
 
-                    def prune_channel_layer(layer): layer.is_pruned_channel = True
+                # To prevent weight reselection especially in case of two step training
+                # since the weight are not modified in place when pruning is done first
+                # before QAT
+                if self.is_pruned_channel and not force_prune_channel:
+                    warnings.warn("Model has been pruned before to force for a repruning specify force_prune_channel as True")
+                    continue
 
-                    # To prevent weight reselection especially in case of two step training
-                    # since the weight are not modified in place when pruning is done first
-                    # before QAT
-                    if self.is_pruned_channel and not force_prune_channel:
-                        warnings.warn("Model has been pruned before to force for a repruning specify force_prune_channel as True")
-                        continue
-
-                    model.apply(prune_channel_layer)
-                    model.init_prune_channel()
+                # Build masks first so weight_prune_channel exists before
+                # is_pruned_channel=True is set — prevents AttributeError in
+                # any forward pass that could fire between the two calls.
+                model.init_prune_channel()
+                model.apply(prune_channel_layer)
 
             elif compression_type == "quantize":
                 def quantize_layer(layer): layer.is_quantized = True
@@ -511,7 +517,7 @@ class Sequential(nn.Sequential):
                 # For non uniform pruning, 
                 elif isinstance(sparsity, dict):
                     for name, layer_sparsity in sparsity.items():
-                        # Skip if layer cannot be pruned (
+                        # Skip if layer cannot be pruned
                         if self[name].get_prune_channel_possible_hyperparameters() is None:
                             continue
                         if not isinstance(layer_sparsity, (float, int, dict)):
@@ -525,7 +531,7 @@ class Sequential(nn.Sequential):
                         if not isinstance(layer_sparsity, float) and \
                             layer_sparsity not in self[name].get_prune_channel_possible_hyperparameters():
                             if raise_error:
-                                raise ValueError(f"Recieved a layer_sparsity of {layer_sparsity} ")
+                                raise ValueError(f"Received a layer_sparsity of {layer_sparsity} ")
                             return False
                     for name in self.names():
                         # if name not in sparsity and self.layers[name].is_prunable():
@@ -587,23 +593,23 @@ class Sequential(nn.Sequential):
                     assert len(parameter_bitwidth) == len(granularity) and parameter_bitwidth.keys() == granularity.keys(), \
                             f"the keys of parameter_bitwidth has to match with that of granularity"
                     
-                    for (layer_bitwidth_name, layer_parameter_bitwidth), (_, layer_granularity) in zip(parameter_bitwidth.items(), granularity.items()):
+                    for (layer_name, layer_parameter_bitwidth), (_, layer_granularity) in zip(parameter_bitwidth.items(), granularity.items()):
                         # Skip if layer cannot be pruned (
                         if not isinstance(layer_parameter_bitwidth, int):
                             if raise_error:
-                                raise TypeError(f"layer parameter bitwidth has to be of type of int not {type(layer_sparsity)} for layer {layer_bitwidth_name}!")
+                                raise TypeError(f"layer parameter bitwidth has to be of type of int not {type(layer_sparsity)} for layer {layer_name}!")
                             return False
                         if not isinstance(layer_granularity, QuantizationGranularity):
                             if raise_error:
-                                raise TypeError(f"layer granularity has to be of type QuantizationGranularity not {type(layer_sparsity)} for layer {layer_bitwidth_name}!")
+                                raise TypeError(f"layer granularity has to be of type QuantizationGranularity not {type(layer_sparsity)} for layer {layer_name}!")
                             return False
-                        if layer_bitwidth_name not in self.names():
+                        if layer_name not in self.names():
                             if raise_error:
-                                raise NameError(f"Found unknown layer name {layer_bitwidth_name}")
+                                raise NameError(f"Found unknown layer name {layer_name}")
                             return False
                         if layer_parameter_bitwidth not in [2, 4, 8]:
                             if raise_error:
-                                raise ValueError(f"Recieved a layer_sparsity of {layer_sparsity} ")
+                                raise ValueError(f"Received a layer_sparsity of {layer_sparsity} ")
                             return False
                     for name in self.names():
                         if name not in parameter_bitwidth:
@@ -674,10 +680,17 @@ class Sequential(nn.Sequential):
         """
         prune_channel_possible_hypermeters = dict()
 
+        def _expand_prune_hp(prefix, hp, out):
+            if isinstance(hp, dict):
+                for sub_name, sub_hp in hp.items():
+                    _expand_prune_hp(f"{prefix}.{sub_name}", sub_hp, out)
+            else:
+                out[prefix] = hp
+
         for name, layer in list(self.names_layers())[:-1]:
             layer_prune_channel_possible_hypermeters = layer.get_prune_channel_possible_hyperparameters()
             if layer_prune_channel_possible_hypermeters is not None:
-                prune_channel_possible_hypermeters[f"sparsity.{name}"] = layer_prune_channel_possible_hypermeters
+                _expand_prune_hp(f"sparsity.{name}", layer_prune_channel_possible_hypermeters, prune_channel_possible_hypermeters)
 
         # TODO: To extend to other metric type
         prune_channel_possible_hypermeters["metric"] = ["l2"]
@@ -696,11 +709,18 @@ class Sequential(nn.Sequential):
         quantize_possible_hypermeters["scheme"] = [scheme]
         quantize_possible_hypermeters["activation_bitwidth"] = activation_bitwidth
         
+        def _expand_quantize_hp(prefix, hp, out):
+            if "parameter_bitwidth" in hp:
+                out[f"parameter_bitwidth.{prefix}"] = hp["parameter_bitwidth"]
+                out[f"granularity.{prefix}"] = hp["granularity"]
+            else:
+                for sub_name, sub_hp in hp.items():
+                    _expand_quantize_hp(f"{prefix}.{sub_name}", sub_hp, out)
+
         for name, layer in list(self.names_layers()):
             layer_quantize_possible_hypermeters = layer.get_quantize_possible_hyperparameters()
             if layer_quantize_possible_hypermeters is not None:
-                quantize_possible_hypermeters[f"parameter_bitwidth.{name}"] = layer_quantize_possible_hypermeters["parameter_bitwidth"]
-                quantize_possible_hypermeters[f"granularity.{name}"] = layer_quantize_possible_hypermeters["granularity"]
+                _expand_quantize_hp(name, layer_quantize_possible_hypermeters, quantize_possible_hypermeters)
 
         return quantize_possible_hypermeters
 
@@ -814,7 +834,7 @@ class Sequential(nn.Sequential):
             self.train() # Ensure observers are updating
             if scheme == QuantizationScheme.STATIC:
                 assert calibration_data is not None, f"Pass a calibration data when doing static quantization"
-                # self.to(calibration_data.device)
+                self.to(calibration_data.device)
                 self(calibration_data)
 
         return
@@ -838,64 +858,92 @@ class Sequential(nn.Sequential):
         Returns:
             A new Sequential model with fused layers.
         """
-        names_layers = list(self.names_layers())
 
-        fused_model = Sequential()
 
         # Helper to preserve DMC metadata (pruning masks/quantization config) 
         # when transferring to the new fused layer instance.
-        def add_fused_layer(name, layer, fused_layer=None):
+        def add_fused_layer(name, layer, fused_model, fused_layer=None):
             if fused_layer is not None:
                 init_dmc_parameter(layer, fused_layer)
                 fused_model.add_module(name, fused_layer) 
             else:
                 fused_model.add_module(name, layer) 
 
-        current_name, current_layer = names_layers[0]
-        for next_name, next_layer in names_layers[1:]:
-            is_fused = False
-            if isinstance(current_layer, Conv2d):
-                if isinstance(next_layer, BatchNorm2d):
-                    fused_layer = fuse_conv2d_batchnorm2d(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True                     
-                elif isinstance(next_layer, ReLU) and not batchnorm_only:
-                    fused_layer = fuse_conv2d_relu(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True                     
-                elif isinstance(next_layer, ReLU6) and not batchnorm_only:
-                    fused_layer = fuse_conv2d_relu6(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True                     
+        def fuse_container(container: Union[Sequential, Block, Branch]) -> Union[Sequential, Block, Branch]:
 
-            elif isinstance(current_layer, Linear):
-                if isinstance(next_layer, ReLU)  and not batchnorm_only:
-                    fused_layer = fuse_linear_relu(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True                     
-                elif isinstance(next_layer, ReLU6) and not batchnorm_only:
-                    fused_layer = fuse_linear_relu6(current_layer, next_layer)
-                    add_fused_layer(current_name, current_layer, fused_layer)
-                    is_fused = True            
+            if not isinstance(container, (Sequential, Block, Branch)):
+                return container
+                
+            names_layers = list(container.names_layers())
 
-            # Update pointer for next iteration
-            if is_fused:
-                current_layer = fused_layer
+            if isinstance(container, Sequential):
+                fused_model = Sequential()
+            elif isinstance(container, Block):
+                fused_model = Block()
+            elif isinstance(container, Branch):
+                pass
             else:
-                fused_model.add_module(current_name, current_layer)
-                current_layer = next_layer
-                current_name = next_name
-            
-        fused_model.add_module(current_name, current_layer)
+                raise ValueError(f"Unsupported container type: {type(container)}")
 
-        init_dmc_parameter(self, fused_model)
-        
+            current_name, current_layer = names_layers[0]
+            for next_name, next_layer in names_layers[1:]:
+                is_fused = False
+
+                if isinstance(current_layer, (Sequential, Block)):
+                    current_layer = fuse_container(current_layer)
+
+                elif isinstance(current_layer, Branch):
+                    current_layer = Branch(
+                        sublayer1=fuse_container(current_layer.sublayer1),
+                        sublayer2=fuse_container(current_layer.sublayer2) if current_layer.sublayer2 is not None else None
+                    )
+                
+                if isinstance(current_layer, Conv2d):
+                    if isinstance(next_layer, BatchNorm2d):
+                        fused_layer = fuse_conv2d_batchnorm2d(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True                     
+                    elif isinstance(next_layer, ReLU) and not batchnorm_only:
+                        fused_layer = fuse_conv2d_relu(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True                     
+                    elif isinstance(next_layer, ReLU6) and not batchnorm_only:
+                        fused_layer = fuse_conv2d_relu6(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True                     
+
+                elif isinstance(current_layer, Linear):
+                    if isinstance(next_layer, ReLU)  and not batchnorm_only:
+                        fused_layer = fuse_linear_relu(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True                     
+                    elif isinstance(next_layer, ReLU6) and not batchnorm_only:
+                        fused_layer = fuse_linear_relu6(current_layer, next_layer)
+                        add_fused_layer(current_name, current_layer, fused_model, fused_layer)
+                        is_fused = True            
+
+                # Update pointer for next iteration
+                if is_fused:
+                    current_layer = fused_layer
+                else:
+                    fused_model.add_module(current_name, current_layer)
+                    current_layer = next_layer
+                    current_name = next_name
+                
+            fused_model.add_module(current_name, current_layer)
+
+            init_dmc_parameter(container, fused_model)
+            
+            return fused_model
+
+        fused_model = fuse_container(self)
+            
         if device:
             fused_model.to(device=device)
 
         return fused_model
 
-        
+
     def get_size_in_bits(self) -> int:
         """Calculates total model size in bits (Sum of all packed layers)."""
         size = 0
@@ -1060,7 +1108,7 @@ class Sequential(nn.Sequential):
             elif activation_bitwidth == 2:
                 quantize_property += ACTIVATION_BITWIDTH_2
             else:
-                raise QuantizationBitWidthError
+                raise QuantizationBitWidthError(activation_bitwidth)
             
             workspace_header = (
                 f"#define WORKSPACE_SIZE {max_layer_acitivation_workspace_size}\n"

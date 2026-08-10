@@ -10,7 +10,6 @@ from tqdm.auto import tqdm
 import torch
 from torch import nn
 
-from .estimator import Estimator
 from .sequential import Sequential
 from ..layers import *
 
@@ -109,7 +108,7 @@ def convert_from_layer_torch_nn_to_dmc(module: nn.Module) -> Layer:
             copy_tensor(module.running_var, layer.running_var)
 
     elif isinstance(module, nn.Dropout):
-        return ReLU()
+        return Dropout(p=module.p, inplace=module.inplace)
     else:
         raise RuntimeError(f"module of type {type(module)} does not have a dmc equivalent yet.")
 
@@ -131,7 +130,10 @@ def get_nas_compression_data(
     epochs:Optional[int] = None,
     criterion_fun:Optional[nn.Module] = None,
     lr:float=1e-3,
-    lr_scheduler:Optional[torch.optim.lr_scheduler.LRScheduler] = None,
+    optimizer_cls:Optional[torch.optim.Optimizer] = None,
+    optimizer_kwargs:Optional[Dict] = None,
+    lr_scheduler_cls:Optional[torch.optim.lr_scheduler.LRScheduler] = None,
+    lr_scheduler_kwargs:Optional[Dict] = None,
     callbacks:List[Callable] = [],
     random_seed:Optional[int] = None,
     two_step:bool=True
@@ -161,18 +163,18 @@ def get_nas_compression_data(
         while not valid:
             compression_config = {config_key: random.choice(config_hp) for config_key, config_hp in compression_possible_hp.items()}
             compression_config_decode = model.decode_compression_dict_hyperparameter(compression_config)
-            valid = model.is_compression_config_valid(
+            valid = model.fuse().is_compression_config_valid(
                 compression_config_decode,
                 compression_keys=["quantize"],
                 raise_error=False
             )
             if valid:
+                model = model.fuse()                
                 compressed_model = model.init_compress(
                     config=compression_config_decode,
                     input_shape=input_shape, calibration_data=calibration_data,
                     device=device
                 )
-
                 valid = filter(compressed_model, compression_config_decode)
 
         if train:
@@ -185,8 +187,8 @@ def get_nas_compression_data(
                 del prune_config["quantize"]
                 pruned_model = model.init_compress(prune_config, input_shape, calibration_data=calibration_data, device=device)
 
-                optimizer_fun = torch.optim.SGD(pruned_model.parameters(), lr=lr, momentum=.9, weight_decay=5e-4)
-                lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_fun, mode="min", patience=1)
+                optimizer_fun = optimizer_cls(pruned_model.parameters(), lr=lr, **optimizer_kwargs)
+                lr_scheduler = lr_scheduler_cls(optimizer_fun, **lr_scheduler_kwargs)
 
                 pruned_model.fit(
                     train_dataloader=train_dataloader,
@@ -207,8 +209,8 @@ def get_nas_compression_data(
                     device=device
                 )
                 
-            optimizer_fun = torch.optim.SGD(compressed_model.parameters(), lr=lr, momentum=.9, weight_decay=5e-4)
-            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_fun, mode="min", patience=1)
+            optimizer_fun = optimizer_cls(compressed_model.parameters(), lr=lr, **optimizer_kwargs)
+            lr_scheduler = lr_scheduler_cls(optimizer_fun, **lr_scheduler_kwargs)
 
             compressed_model.fit(
                 train_dataloader=train_dataloader,
@@ -266,7 +268,7 @@ def get_size_of_compression(
 
 def brute_force_search_compression_config(
     model:Sequential,
-    estimator:Estimator,
+    estimator:nn.Module,
     input_shape:Tuple,
     calibration_data:torch.Tensor,
     condition:Callable=lambda metric, size, ram, config: True,                 # list of conditions
@@ -318,7 +320,7 @@ def brute_force_search_compression_config(
     # iterate search space
     for compression_config in get_all_combinations(search_space):
         # predict metric
-        metric = estimator.predict(compression_config)
+        metric = estimator(compression_config)
 
         # create compressed model to get the model size
         compressed = model.init_compress(
@@ -353,7 +355,7 @@ def brute_force_search_compression_config(
 
 def evolutionary_search_compression_config(
     model:Sequential,
-    estimator:Estimator,
+    estimator:nn.Module,
     input_shape:Tuple,
     calibration_data:torch.Tensor,
     device:str="cpu",
@@ -414,7 +416,7 @@ def evolutionary_search_compression_config(
         ):
             return (float("-inf") if maximize else float("inf")), [None, None, None]
         
-        metric = estimator.predict(compression_config).item()
+        metric = estimator(compression_config)
 
         compressed = model.init_compress(
             model.decode_compression_dict_hyperparameter(compression_config),

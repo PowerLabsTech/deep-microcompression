@@ -21,11 +21,13 @@ from torch import nn
 
 from .layer import Layer
 from ..compressors import (
-    Prune_Channel, 
+    Prune_Channel,
     Quantize,
     QuantizationScheme,
     QuantizationScaleType,
-    QuantizationGranularity
+    QuantizationGranularity,
+    QuantizationBitWidthError,
+    QuantizationGranularityError,
 )
 
 from ..utils import (
@@ -247,7 +249,10 @@ class Linear(Layer, nn.Linear):
 
 
     def get_quantize_possible_hyperparameters(self):
-        return super().get_quantize_possible_hyperparameters()
+        return {
+            "parameter_bitwidth": [8, 4, 2],
+            "granularity": [QuantizationGranularity.PER_TENSOR, QuantizationGranularity.PER_CHANNEL],
+        }
     
     @torch.no_grad()
     def get_size_in_bits(self):  
@@ -401,7 +406,7 @@ class Linear(Layer, nn.Linear):
             elif granularity == QuantizationGranularity.PER_CHANNEL:
                 quantize_property += PER_CHANNEL
             else:
-                raise QuantizationGranularityError
+                raise QuantizationGranularityError(granularity)
 
             quantize_property += "_"
             if parameter_bitwidth == 8:
@@ -411,7 +416,7 @@ class Linear(Layer, nn.Linear):
             elif parameter_bitwidth == 2:
                 quantize_property += PARAMETER_BITWIDTH_2
             else:
-                raise QuantizationBitWidthError
+                raise QuantizationBitWidthError(parameter_bitwidth)
 
             if self.bias is not None:
                 layer_def = f"{self.__class__.__name__}_DQ {var_name}({output_feature_size}, {input_feature_size}, (int8_t*){var_name}_weight, (float*){var_name}_bias, (float*){var_name}_weight_scale, {quantize_property});\n"
@@ -441,7 +446,7 @@ class Linear(Layer, nn.Linear):
             elif granularity == QuantizationGranularity.PER_CHANNEL:
                 quantize_property += PER_CHANNEL
             else:
-                raise QuantizationGranularityError
+                raise QuantizationGranularityError(granularity)
 
             quantize_property += "_"
 
@@ -452,8 +457,8 @@ class Linear(Layer, nn.Linear):
             elif activation_bitwidth == 2:
                 quantize_property += ACTIVATION_BITWIDTH_2
             else:
-                raise QuantizationBitWidthError
-            
+                raise QuantizationBitWidthError(activation_bitwidth)
+
             quantize_property += "_"
             
             if parameter_bitwidth == 8:
@@ -463,7 +468,7 @@ class Linear(Layer, nn.Linear):
             elif parameter_bitwidth == 2:
                 quantize_property += PARAMETER_BITWIDTH_2
             else:
-                raise QuantizationBitWidthError
+                raise QuantizationBitWidthError(parameter_bitwidth)
 
             if self.bias is not None:
                 layer_def = (
